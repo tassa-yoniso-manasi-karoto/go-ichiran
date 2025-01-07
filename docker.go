@@ -13,6 +13,10 @@ import (
 	"github.com/k0kubun/pp"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
+	"github.com/adrg/xdg"
+	
+	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/client"
 
 	"github.com/compose-spec/compose-go/v2/cli"
 	"github.com/docker/cli/cli/command"
@@ -22,6 +26,8 @@ import (
 )
 
 var DockerStartTO = 300 * time.Second
+
+const remote = "https://github.com/tshatrov/ichiran.git"
 
 type IchiranLogConsumer struct {
 	Prefix      string
@@ -153,6 +159,7 @@ func NewDocker() (*Docker, error) {
 }
 
 func (id *Docker) Initialize() error {
+	// Check if ichiran is already running
 	stacks, err := id.service.List(id.ctx, api.ListOptions{All: true})
 	if err != nil {
 		return fmt.Errorf("failed to list stacks: %w", err)
@@ -164,38 +171,40 @@ func (id *Docker) Initialize() error {
 			return nil
 		}
 	}
-	/*
-		if _, err := os.Stat(tmpDir); err != nil {
-			if err = os.Mkdir(tmpDir, os.ModeDir); err != nil {
-				log.Fatal().Err(err).Msg("can't create tmpDir")
-			}
-		}*/
-	tmpDir, err := os.MkdirTemp("", "ichiran") // FIXME MkdirTemp is not suitable and must be changed
+
+	// Get the ichiran directory
+	ichiranDir, err := getIchiranDir()
 	if err != nil {
-		return fmt.Errorf("failed to create temp directory: %w", err)
+		return fmt.Errorf("failed to get ichiran directory: %w", err)
 	}
-	defer os.RemoveAll(tmpDir)
-	log.Info().Str("dir", tmpDir).Msg("created temp directory")
-	mustBuild := true // FIXME
-	if mustBuild {
+
+	if err := os.MkdirAll(ichiranDir, 0755); err != nil {
+		return fmt.Errorf("failed to create ichiran directory: %w", err)
+	}
+
+	// Check if build is necessary
+	needsBuild, err := checkIfBuildNeeded(ichiranDir)
+	if err != nil {
+		return fmt.Errorf("failed to check build status: %w", err)
+	}
+
+	if needsBuild {
 		log.Info().Msg("downloading ichiran repository...")
-		// Check if the directory already exists
-		if _, err := os.Stat(tmpDir); os.IsNotExist(err) {
-			// Directory does not exist, clone the repository
+		// Check for .git directory instead of the directory itself
+		if _, err := os.Stat(filepath.Join(ichiranDir, ".git")); os.IsNotExist(err) {
 			log.Info().Msg("Local repository does not exist. Cloning...")
-			cloneRepo("https://github.com/tshatrov/ichiran.git", tmpDir)
+			cloneRepo(remote, ichiranDir)
 		} else {
-			// Directory exists, pull changes
 			log.Info().Msg("Local repository exists. Pulling changes...")
-			pullRepo(tmpDir)
+			pullRepo(ichiranDir)
 		}
 	}
 	options, err := cli.NewProjectOptions(
-		[]string{filepath.Join(tmpDir, "docker-compose.yml")},
+		[]string{filepath.Join(ichiranDir, "docker-compose.yml")},
 		cli.WithOsEnv,
 		cli.WithDotEnv,
 		cli.WithName("ichiran"),
-		cli.WithWorkingDirectory(tmpDir),
+		cli.WithWorkingDirectory(ichiranDir),
 	)
 	if err != nil {
 		return fmt.Errorf("failed to create project options: %w", err)
@@ -205,8 +214,8 @@ func (id *Docker) Initialize() error {
 	if err != nil {
 		return fmt.Errorf("failed to load project: %w", err)
 	}
+
 	x := 0
-	// Add required labels to services
 	color.Redf("project: %s,\tWorkingDir:%s\n", project.Name, project.WorkingDir)
 	for name, s := range project.Services {
 		color.Redf("service: %d %s_%s_%#v\n", x, name, s.ContainerName, s.Entrypoint)
@@ -226,12 +235,13 @@ func (id *Docker) Initialize() error {
 		Pull:     true,
 		Push:     false,
 		Progress: "auto",
-		NoCache:  false, //TODO
+		NoCache:  false,
 		Quiet:    false,
 		Services: project.ServiceNames(),
 		Deps:     false,
 	}
-	if mustBuild {
+
+	if needsBuild {
 		log.Info().Msg("building containers...")
 		err = id.service.Build(id.ctx, project, buildOpts)
 		if err != nil {
@@ -347,14 +357,7 @@ func (id *Docker) Close() error {
 	return id.Stop()
 }
 
-func (id *Docker) Down() error {
-	log.Info().Msg("removing ichiran containers and resources...")
-	return id.service.Down(id.ctx, "ichiran", api.DownOptions{
-		RemoveOrphans: true,
-		Volumes:       true,    // Remove volumes as well
-		Images:        "local", // Remove locally built images
-	})
-}
+
 
 func (id *Docker) Status() (string, error) {
 	stacks, err := id.service.List(id.ctx, api.ListOptions{})
@@ -369,6 +372,116 @@ func (id *Docker) Status() (string, error) {
 	}
 	return api.UNKNOWN, nil
 }
+
+
+
+
+
+
+func checkIfBuildNeeded(ichiranDir string) (bool, error) {
+	// Check if the git repository exists by looking for .git directory
+	gitDir := filepath.Join(ichiranDir, ".git")
+	if _, err := os.Stat(gitDir); os.IsNotExist(err) {
+		log.Info().Msg("Git repository not found, build needed")
+		return true, nil
+	}
+
+	repo, err := git.PlainOpen(ichiranDir)
+	if err != nil {
+		log.Warn().Err(err).Msg("Failed to open git repository")
+		return true, nil
+	}
+
+	// Get the current HEAD
+	head, err := repo.Head()
+	if err != nil {
+		log.Warn().Err(err).Msg("Failed to get HEAD")
+		return true, nil
+	}
+
+	// Get the remote reference
+	remote, err := repo.Remote("origin")
+	if err != nil {
+		log.Warn().Err(err).Msg("Failed to get remote")
+		return true, nil
+	}
+
+	// Fetch the latest changes
+	err = remote.Fetch(&git.FetchOptions{
+		Force: true,
+	})
+	if err != nil && err != git.NoErrAlreadyUpToDate {
+		log.Warn().Err(err).Msg("Failed to fetch from remote")
+		return true, nil
+	}
+
+	// Get the remote HEAD
+	refs, err := remote.List(&git.ListOptions{})
+	if err != nil {
+		log.Warn().Err(err).Msg("Failed to list refs")
+		return true, nil
+	}
+
+	for _, ref := range refs {
+		if ref.Name().String() == "refs/heads/master" {
+			// If local and remote HEADs are different, build is needed
+			if head.Hash() != ref.Hash() {
+				log.Info().Msg("Local and remote HEADs differ, build needed")
+				return true, nil
+			}
+			break
+		}
+	}
+
+	// Check if docker images exist and are running
+	cli, err := client.NewClientWithOpts(client.FromEnv)
+	if err != nil {
+		return false, fmt.Errorf("failed to create Docker client: %w", err)
+	}
+	defer cli.Close()
+
+	containers, err := cli.ContainerList(context.Background(), container.ListOptions{})
+	if err != nil {
+		return false, fmt.Errorf("failed to list containers: %w", err)
+	}
+
+	// Check for required containers
+	requiredContainers := map[string]bool{
+		"ichiran-main-1": false,
+		"ichiran-pg-1":   false,
+	}
+
+	for _, container := range containers {
+		for _, name := range container.Names {
+			// Container names come with a leading slash, so we trim it
+			cleanName := strings.TrimPrefix(name, "/")
+			if _, exists := requiredContainers[cleanName]; exists {
+				requiredContainers[cleanName] = true
+			}
+		}
+	}
+
+	// Check if all required containers are running
+	for containerName, isRunning := range requiredContainers {
+		if !isRunning {
+			log.Info().Str("container", containerName).Msg("Required container not running")
+			return true, nil
+		}
+	}
+
+	return false, nil
+}
+
+func getIchiranDir() (string, error) {
+	// Get the base config directory following platform conventions
+	configPath, err := xdg.ConfigFile("ichiran")
+	if err != nil {
+		return "", fmt.Errorf("failed to get config directory: %w", err)
+	}
+	return configPath, nil
+}
+
+
 
 // fmt of status isn't that of api constants, I've had: running(2), Unknown
 func std(status string) string {
@@ -387,6 +500,8 @@ func std(status string) string {
 	}
 	return api.FAILED
 }
+
+
 
 func placeholder3456543() {
 	color.Redln(" 𝒻*** 𝓎ℴ𝓊 𝒸ℴ𝓂𝓅𝒾𝓁ℯ𝓇")

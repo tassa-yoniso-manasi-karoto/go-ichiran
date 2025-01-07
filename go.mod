@@ -3,6 +3,7 @@ module github.com/tassa-yoniso-manasi-karoto/go-ichiran
 go 1.23.2
 
 require (
+	github.com/adrg/xdg v0.5.3
 	github.com/compose-spec/compose-go/v2 v2.4.6
 	github.com/docker/cli v27.4.0+incompatible
 	github.com/docker/compose/v2 v2.32.1
