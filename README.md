@@ -65,6 +65,7 @@ Kana: わたし ‌は にほんご を べんきょう しています .
 Romaji: watashi wa nihongo wo benkyō shiteimasu . 
 Gloss: 私(I; me) は(indicates sentence topic; indicates contrast with another option (stated or unstated); adds emphasis) 日本語(Japanese (language)) を(indicates direct object of action; indicates subject of causative expression; indicates an area traversed; indicates time (period) over which action takes place; indicates point of departure or separation of action; indicates object of desire, like, hate, etc.) . 
 ```
+
 ## Requirements
 
 **Note: The Docker library in Go is not standalone - it requires a running Docker daemon. Docker Desktop (Windows/Mac) or Docker Engine (Linux) must be installed and running for this library to work.**
@@ -133,6 +134,16 @@ Gloss: 私(I; me) は(indicates sentence topic; indicates contrast with another 
    sudo usermod -aG docker $USER
    # Log out and back in for changes to take effect
    ```
+## Docker compose containers' location
+
+- Linux: ~/.config/ichiran
+- macOS: ~/Library/Application Support/ichiran
+- Windows: %LOCALAPPDATA%\ichiran
+
+## Alternatives
+
+- [ikawaha/kagome](https://github.com/ikawaha/kagome): self-contained Japanese Morphological Analyzer written in pure Go
+- [shogo82148/go-mecab](https://github.com/shogo82148/go-mecab): MeCab binding for Golang
 
 ## License
 
