@@ -1,8 +1,6 @@
-module ichiran
+module github.com/tassa-yoniso-manasi-karoto/go-ichiran
 
 go 1.23.2
-
-replace "local.host/lib/translitkit/lang/jpn" => /home/voiduser/go/src/translitkit/lang/jpn
 
 require (
 	github.com/compose-spec/compose-go/v2 v2.4.6
@@ -43,7 +41,6 @@ require (
 	github.com/cenkalti/backoff/v4 v4.3.0 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/cloudflare/circl v1.3.7 // indirect
-	github.com/compose-spec/compose-go v1.20.2 // indirect
 	github.com/containerd/console v1.0.4 // indirect
 	github.com/containerd/containerd v1.7.24 // indirect
 	github.com/containerd/containerd/api v1.7.19 // indirect
