@@ -32,6 +32,7 @@ const remote = "https://github.com/tshatrov/ichiran.git"
 var (
 	// DockerStartTO is the timeout duration for starting Docker containers.
 	DockerStartTO = 300 * time.Second
+	DockerRebuildTO = 30 * time.Minute
 	ErrIsAlreadyRunning = errors.New("ichiran containers are already running")
 	ErrNotInitialized = errors.New("project not initialized, was Init() called?")
 )
@@ -84,6 +85,7 @@ func (id *Docker) Init() error {
 // InitForce initializes the ichiran Docker environment with forced rebuild.
 // Similar to Init but forces container rebuilding.
 func (id *Docker) InitForce() error {
+	DockerStartTO = DockerRebuildTO
 	return id.initialize(true)
 }
 
@@ -122,6 +124,7 @@ func (id *Docker) initialize(NoCache bool) (err error) {
 		Msg("init state")
 
 	if needsBuild {
+		DockerStartTO = DockerRebuildTO
 		if err := id.build(NoCache); err != nil {
 			return fmt.Errorf("build failed: %w", err)
 		}
@@ -193,28 +196,31 @@ func (id *Docker) up() error {
 	}
 
 	log.Info().Msg("up-ing containers...")
-	err := id.service.Up(id.ctx, id.project, api.UpOptions{
-		Create: api.CreateOptions{
-			Build:         &buildOpts,
-			Services:      id.project.ServiceNames(),
-			RemoveOrphans: true,
-			IgnoreOrphans: false,
-			Recreate:      api.RecreateNever,
-			Inherit:       false,
-			QuietPull:     false,
-		},
-		Start: api.StartOptions{
-			Wait:         true,
-			WaitTimeout:  DockerStartTO,
-			Project:      id.project,
-			Services:     id.project.ServiceNames(),
-			ExitCodeFrom: "main",
-			Attach:       id.logger,
-		},
-	})
-	if err != nil {
-		return fmt.Errorf("container startup failed: %w", err)
-	}
+	
+	go func(){
+		err := id.service.Up(id.ctx, id.project, api.UpOptions{
+			Create: api.CreateOptions{
+				Build:         &buildOpts,
+				Services:      id.project.ServiceNames(),
+				RemoveOrphans: true,
+				IgnoreOrphans: false,
+				Recreate:      api.RecreateNever,
+				Inherit:       false,
+				QuietPull:     false,
+			},
+			Start: api.StartOptions{
+				Wait:         true,
+				WaitTimeout:  DockerStartTO,
+				Project:      id.project,
+				Services:     id.project.ServiceNames(),
+				ExitCodeFrom: "main",
+				Attach:       id.logger,
+			},
+		})
+		if err != nil {
+			id.logger.failedChan <- fmt.Errorf("container startup failed: %v", err)
+		}
+	}()
 
 	// Wait for initialization
 	log.Info().Msg("waiting for ichiran to initialize...")
