@@ -1,3 +1,6 @@
+// Package ichiran provides functionality for Japanese text analysis using Docker containers
+// and the ichiran morphological analyzer.
+
 package ichiran
 
 import (
@@ -7,7 +10,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"os"
 	"reflect"
 	"regexp"
 	"strings"
@@ -34,7 +36,6 @@ https://pkg.go.dev/github.com/docker/cli@v27.4.1+incompatible/cli/flags
 */
 
 var (
-	Config              ConfigT
 	reMultipleSpacesSeq = regexp.MustCompile(`\s{2,}`)
 )
 
@@ -47,11 +48,11 @@ func init() {
 
 // JSONToken represents a single token with all its analysis information
 type JSONToken struct {
-	Surface     string `json:"text"` // Original text
-	IsToken     bool
-	Reading     string      `json:"reading"` // Reading with kanji and kana
-	Kana        string      `json:"kana"`    // Kana reading
-	Romaji      string      // Romanized form from ichiran
+	Surface     string `json:"text"`		// Original text
+	IsToken     bool				// Whether this is a Japanese token or non-Japanese text
+	Reading     string      `json:"reading"`	// Reading with kanji and kana
+	Kana        string      `json:"kana"`		// Kana reading
+	Romaji      string				// Romanized form from ichiran
 	Score       int         `json:"score"`          // Analysis score
 	Seq         int         `json:"seq"`            // Sequence number
 	Gloss       []Gloss     `json:"gloss"`          // English meanings
@@ -59,9 +60,10 @@ type JSONToken struct {
 	Alternative []JSONToken `json:"alternative"`    // Alternative interpretations
 	//Compound	[]string   `json:"compound"`		  // Delineable elements of compound expressions
 	//Components  []JSONToken	`json:"components"`		// Details of delineable elements of compound expressions
-	Raw []byte `json:"-"` // Raw JSON for future use
+	Raw []byte `json:"-"`				// Raw JSON for future processing
 }
 
+// JSONTokens is a slice of token pointers representing a complete analysis result.
 type JSONTokens []*JSONToken
 
 // Gloss represents the English glosses and part of speech
@@ -87,6 +89,8 @@ type Prop struct {
 }
 
 // FIXME update the methods to target *JSONTokens
+
+// TokenizedStr returns a string of all tokens separated by spaces or commas.
 func (tokens JSONTokens) TokenizedStr() string {
 	var parts []string
 	for _, token := range tokens {
@@ -100,6 +104,7 @@ func (tokens JSONTokens) TokenizedStr() string {
 	return reMultipleSpacesSeq.ReplaceAllString(s, ", ")
 }
 
+// TokenizedParts returns a slice of all token surfaces.
 func (tokens JSONTokens) TokenizedParts() []string {
 	var parts []string
 	for _, token := range tokens {
@@ -108,6 +113,7 @@ func (tokens JSONTokens) TokenizedParts() []string {
 	return parts
 }
 
+// Kana returns a string of all tokens in kana form where available.
 func (tokens JSONTokens) Kana() string {
 	var parts []string
 	for _, token := range tokens {
@@ -125,6 +131,7 @@ func (tokens JSONTokens) Kana() string {
 	return reMultipleSpacesSeq.ReplaceAllString(s, ", ")
 }
 
+// KanaParts returns a slice of all tokens in kana form where available.
 func (tokens JSONTokens) KanaParts() []string {
 	var parts []string
 	for _, token := range tokens {
@@ -141,6 +148,7 @@ func (tokens JSONTokens) KanaParts() []string {
 	return parts
 }
 
+// Roman returns a string of all tokens in romanized form.
 func (tokens JSONTokens) Roman() string {
 	var parts []string
 	for _, token := range tokens {
@@ -156,6 +164,7 @@ func (tokens JSONTokens) Roman() string {
 	return reMultipleSpacesSeq.ReplaceAllString(s, ", ")
 }
 
+// RomanParts returns a slice of all tokens in romanized form.
 func (tokens JSONTokens) RomanParts() []string {
 	var parts []string
 	for _, token := range tokens {
@@ -164,37 +173,40 @@ func (tokens JSONTokens) RomanParts() []string {
 	return parts
 }
 
-func (tokens JSONTokens) GlossString() string {
-	var parts []string
-	for _, token := range tokens {
-		if token.IsToken {
-			var glosses []string
-			for _, g := range token.Gloss {
-				glosses = append(glosses, g.Gloss)
-			}
-			if len(glosses) > 0 {
-				parts = append(parts, fmt.Sprintf("%s(%s)",
-					token.Surface,
-					strings.Join(glosses, "; ")))
-			}
-		} else {
-			parts = append(parts, token.Surface)
-		}
-	}
-	return strings.Join(parts, " ")
-}
+// GlossString returns a formatted string containing tokens and their English glosses.
+// func (tokens JSONTokens) GlossString() string {
+// 	var parts []string
+// 	for _, token := range tokens {
+// 		if token.IsToken {
+// 			var glosses []string
+// 			for _, g := range token.Gloss {
+// 				glosses = append(glosses, g.Gloss)
+// 			}
+// 			if len(glosses) > 0 {
+// 				parts = append(parts, fmt.Sprintf("%s(%s)",
+// 					token.Surface,
+// 					strings.Join(glosses, "; ")))
+// 			}
+// 		} else {
+// 			parts = append(parts, token.Surface)
+// 		}
+// 	}
+// 	return strings.Join(parts, " ")
+// }
 
 //############################################################################
 
-type ConfigT struct {
+// Config defines configuration options for the ichiran client.
+type Config struct {
 	ContainerName string // e.g., "ichiran-main-1"
 	ImageName     string // e.g., "ichiran-main"
 	Timeout       time.Duration
 	Debug         bool
 }
 
-func DefaultConfig() ConfigT {
-	return ConfigT{
+// DefaultConfig returns a Config with default settings.
+func DefaultConfig() Config {
+	return Config{
 		ContainerName: "ichiran-main-1",
 		ImageName:     "ichiran-main",
 		Timeout:       10000 * time.Second,
@@ -202,33 +214,16 @@ func DefaultConfig() ConfigT {
 	}
 }
 
+// Client represents an ichiran client that communicates with the Docker container.
 type Client struct {
 	cli     command.Cli
 	docker  client.APIClient
-	config  ConfigT
-	streams *streams
+	config  Config
 }
 
-// streams implements the command.Streams interface
-type streams struct {
-	in  *os.File
-	out *os.File
-	err *os.File
-}
 
-func (s *streams) In() *os.File {
-	return s.in
-}
-
-func (s *streams) Out() *os.File {
-	return s.out
-}
-
-func (s *streams) Err() *os.File {
-	return s.err
-}
-
-func NewClient(config ConfigT) (*Client, error) {
+// NewClient creates a new ichiran client with the given configuration.
+func NewClient(config Config) (*Client, error) {
 	// Initialize Docker CLI
 	cli, err := command.NewDockerCli(
 		command.WithStandardStreams(),
@@ -251,6 +246,7 @@ func NewClient(config ConfigT) (*Client, error) {
 	}, nil
 }
 
+// Close releases resources associated with the client.
 func (c *Client) Close() error {
 	if closer, ok := c.docker.(io.Closer); ok {
 		return closer.Close()
@@ -258,6 +254,8 @@ func (c *Client) Close() error {
 	return nil
 }
 
+// Analyze performs morphological analysis on the input Japanese text.
+// Returns parsed tokens or an error if analysis fails.
 func (c *Client) Analyze(text string) (*JSONTokens, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), c.config.Timeout)
 	defer cancel()
@@ -338,6 +336,7 @@ func (c *Client) GetDockerClient() client.APIClient {
 	return c.docker
 }
 
+// safe escapes special characters in the input text for shell command usage.
 func safe(text string) (s string) {
 	// FIXME probably for robust approach with a lib
 	s = strings.Replace(text, "\"", "\\\"", -1)
@@ -345,7 +344,7 @@ func safe(text string) (s string) {
 	return strings.TrimPrefix(s, "-")
 }
 
-// readDockerOutput handles Docker's multiplexed output format
+// readDockerOutput reads and processes multiplexed output from Docker.
 func readDockerOutput(reader io.Reader) ([]byte, error) {
 	var output bytes.Buffer
 	header := make([]byte, 8)
@@ -379,6 +378,8 @@ func readDockerOutput(reader io.Reader) ([]byte, error) {
 	return bytes.TrimSpace(output.Bytes()), nil
 }
 
+
+// extractTokens converts raw JSON data into structured token information.
 func extractTokens(group []interface{}) []JSONToken {
 	var tokens []JSONToken
 
@@ -504,18 +505,7 @@ func extractTokens(group []interface{}) []JSONToken {
 	return tokens
 }
 
-func StringCapLen(s string, max int) string {
-	trimmed := false
-	for len(s) > max {
-		s = s[:len(s)-1]
-		trimmed = true
-	}
-	if trimmed {
-		s += "…"
-	}
-	return s
-}
-
+// parseOutput converts raw Docker output into structured token data.
 func parseOutput(output []byte) (JSONTokens, error) {
 	//fmt.Println(string(pretty.Pretty(output)))
 	var rawResult []interface{}
@@ -523,7 +513,7 @@ func parseOutput(output []byte) (JSONTokens, error) {
 	decoder.UseNumber()
 
 	if err := decoder.Decode(&rawResult); err != nil {
-		println(StringCapLen(string(output), 1000))
+		println(stringCapLen(string(output), 1000))
 		log.Fatal().Err(err).Msg("failed to decode JSON")
 		return nil, fmt.Errorf("failed to decode JSON: %w", err)
 	}
@@ -565,6 +555,8 @@ func parseOutput(output []byte) (JSONTokens, error) {
 
 	return tokens, nil
 }
+
+// decodeToken processes Unicode escapes and other encodings in token fields.
 func decodeToken(token *JSONToken) error {
 	var err error
 
@@ -599,6 +591,21 @@ func unescapeUnicodeString(s string) (string, error) {
 	}
 	return unquoted, nil
 }
+
+
+
+func stringCapLen(s string, max int) string {
+	trimmed := false
+	for len(s) > max {
+		s = s[:len(s)-1]
+		trimmed = true
+	}
+	if trimmed {
+		s += "…"
+	}
+	return s
+}
+
 
 func placeholder() {
 	pretty.Pretty([]byte{})

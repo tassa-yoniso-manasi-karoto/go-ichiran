@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+	"errors"
 
 	"github.com/go-git/go-git/v5"
 	"github.com/gookit/color"
@@ -19,116 +20,39 @@ import (
 	"github.com/docker/docker/client"
 
 	"github.com/compose-spec/compose-go/v2/cli"
+	"github.com/compose-spec/compose-go/v2/types"
 	"github.com/docker/cli/cli/command"
 	"github.com/docker/cli/cli/flags"
 	"github.com/docker/compose/v2/pkg/api"
 	"github.com/docker/compose/v2/pkg/compose"
 )
 
-var DockerStartTO = 300 * time.Second
-
 const remote = "https://github.com/tshatrov/ichiran.git"
 
-type IchiranLogConsumer struct {
-	Prefix      string
-	ShowService bool
-	ShowType    bool
-	Level       zerolog.Level
-	initChan    chan struct{}
-	failedChan  chan error
+var (
+	// DockerStartTO is the timeout duration for starting Docker containers.
+	DockerStartTO = 300 * time.Second
+	ErrIsAlreadyRunning = errors.New("ichiran containers are already running")
+	ErrNotInitialized = errors.New("project not initialized, was Init() called?")
+)
+
+
+func init() {
+	//log.Logger = zerolog.New(zerolog.ConsoleWriter{Out: os.Stderr, TimeFormat: time.TimeOnly}).With().Timestamp().Logger()
+	log.Logger = zerolog.Nop()
 }
 
-func NewIchiranLogConsumer() *IchiranLogConsumer {
-	return &IchiranLogConsumer{
-		Prefix:      "compose",
-		ShowService: true,
-		ShowType:    true,
-		Level:       zerolog.DebugLevel,
-		initChan:    make(chan struct{}),
-		failedChan:  make(chan error),
-	}
-}
-
-func (l *IchiranLogConsumer) Log(containerName, message string) {
-	if strings.Contains(message, "All set, awaiting commands") {
-		select {
-		case l.initChan <- struct{}{}:
-		default: // Channel already closed or message already sent
-		}
-	}
-
-	// Regular logging
-	lines := strings.Split(message, "\n")
-	for _, line := range lines {
-		if line = strings.TrimSpace(line); line != "" {
-			event := log.Debug()
-			if l.Level != zerolog.DebugLevel {
-				event = log.WithLevel(l.Level)
-			}
-
-			if l.ShowService {
-				event = event.Str("service", containerName)
-			}
-			if l.ShowType {
-				event = event.Str("type", "stdout")
-			}
-			if l.Prefix != "" {
-				event = event.Str("component", l.Prefix)
-			}
-
-			event.Msg(line)
-		}
-	}
-}
-
-func (l *IchiranLogConsumer) Err(containerName, message string) {
-	lines := strings.Split(message, "\n")
-	for _, line := range lines {
-		if line = strings.TrimSpace(line); line != "" {
-			event := log.Error()
-			if l.ShowService {
-				event = event.Str("service", containerName)
-			}
-			if l.ShowType {
-				event = event.Str("type", "stderr")
-			}
-			if l.Prefix != "" {
-				event = event.Str("component", l.Prefix)
-			}
-
-			event.Msg(line)
-		}
-	}
-}
-
-func (l *IchiranLogConsumer) Status(container, msg string) {
-	event := log.Info()
-	if l.ShowService {
-		event = event.Str("service", container)
-	}
-	if l.ShowType {
-		event = event.Str("type", "status")
-	}
-	if l.Prefix != "" {
-		event = event.Str("component", l.Prefix)
-	}
-
-	event.Msg(msg)
-}
-
-func (l *IchiranLogConsumer) Register(container string) {
-	log.Info().
-		Str("container", container).
-		Str("type", "register").
-		Msg("container registered")
-}
-
+// Docker represents a Docker service manager for ichiran containers.
 type Docker struct {
-	service api.Service
-	ctx     context.Context
-	logger  *IchiranLogConsumer
+	service		api.Service
+	ctx		context.Context
+	logger		*IchiranLogConsumer
+	project		*types.Project
+	ichiranDir	string
 }
 
+// NewDocker creates a new Docker service manager instance.
+// It initializes the Docker CLI and compose service.
 func NewDocker() (*Docker, error) {
 	cli, err := command.NewDockerCli()
 	if err != nil {
@@ -144,21 +68,35 @@ func NewDocker() (*Docker, error) {
 	// Create compose service
 	service := compose.NewComposeService(cli)
 
-	logger := NewIchiranLogConsumer()
-	// Configure logger as needed
-	logger.ShowService = true
-	logger.ShowType = true
-	logger.Prefix = "ichiran"
-	logger.Level = zerolog.InfoLevel // Or whatever level you prefer
-
 	return &Docker{
 		service: service,
 		ctx:     context.Background(),
-		logger:  logger,
+		logger:  NewIchiranLogConsumer(),
 	}, nil
 }
 
-func (id *Docker) Initialize() error {
+// Init initializes the ichiran Docker environment.
+// It sets up the project directory and starts containers if needed.
+func (id *Docker) Init() error {
+	return id.initialize(false)
+}
+
+// InitForce initializes the ichiran Docker environment with forced rebuild.
+// Similar to Init but forces container rebuilding.
+func (id *Docker) InitForce() error {
+	return id.initialize(true)
+}
+
+func (id *Docker) initialize(NoCache bool) (err error) {
+	if id.ichiranDir, err = getIchiranDir(); err != nil {
+		return fmt.Errorf("failed to get ichiran directory: %w", err)
+	}
+	
+	var needsBuild bool
+	if err := id.setupProject(); err != nil {
+		needsBuild = true
+	}
+	
 	// Check if ichiran is already running
 	stacks, err := id.service.List(id.ctx, api.ListOptions{All: true})
 	if err != nil {
@@ -166,69 +104,82 @@ func (id *Docker) Initialize() error {
 	}
 
 	for _, stack := range stacks {
-		if stack.Name == "ichiran" && stack.Status == api.RUNNING {
+		if stack.Name == "ichiran" && std(stack.Status) == api.RUNNING {
 			log.Info().Msg("ichiran containers already running")
 			return nil
 		}
 	}
 
-	// Get the ichiran directory
-	ichiranDir, err := getIchiranDir()
-	if err != nil {
-		return fmt.Errorf("failed to get ichiran directory: %w", err)
+	if !needsBuild {
+		needsBuild, err = checkIfBuildNeeded(id.ichiranDir)
+		if err != nil {
+			return fmt.Errorf("failed to check build status: %w", err)
+		}
 	}
-
-	if err := os.MkdirAll(ichiranDir, 0755); err != nil {
-		return fmt.Errorf("failed to create ichiran directory: %w", err)
-	}
-
-	// Check if build is necessary
-	needsBuild, err := checkIfBuildNeeded(ichiranDir)
-	if err != nil {
-		return fmt.Errorf("failed to check build status: %w", err)
-	}
+	log.Warn().
+		Bool("needsBuild", needsBuild).
+		Bool("NoCache", NoCache).
+		Msg("init state")
 
 	if needsBuild {
-		log.Info().Msg("downloading ichiran repository...")
-		// Check for .git directory instead of the directory itself
-		if _, err := os.Stat(filepath.Join(ichiranDir, ".git")); os.IsNotExist(err) {
-			log.Info().Msg("Local repository does not exist. Cloning...")
-			cloneRepo(remote, ichiranDir)
-		} else {
-			log.Info().Msg("Local repository exists. Pulling changes...")
-			pullRepo(ichiranDir)
+		if err := id.build(NoCache); err != nil {
+			return fmt.Errorf("build failed: %w", err)
 		}
 	}
-	options, err := cli.NewProjectOptions(
-		[]string{filepath.Join(ichiranDir, "docker-compose.yml")},
-		cli.WithOsEnv,
-		cli.WithDotEnv,
-		cli.WithName("ichiran"),
-		cli.WithWorkingDirectory(ichiranDir),
-	)
-	if err != nil {
-		return fmt.Errorf("failed to create project options: %w", err)
+	
+	if err := id.up(); err != nil {
+		return fmt.Errorf("up failed: %w", err)
 	}
+	
+	return nil
+}
 
-	project, err := cli.ProjectFromOptions(id.ctx, options)
-	if err != nil {
-		return fmt.Errorf("failed to load project: %w", err)
-	}
-
-	x := 0
-	color.Redf("project: %s,\tWorkingDir:%s\n", project.Name, project.WorkingDir)
-	for name, s := range project.Services {
-		color.Redf("service: %d %s_%s_%#v\n", x, name, s.ContainerName, s.Entrypoint)
-		x += 1
-		s.CustomLabels = map[string]string{
-			api.ProjectLabel:     project.Name,
-			api.ServiceLabel:     name,
-			api.VersionLabel:     api.ComposeVersion,
-			api.WorkingDirLabel:  project.WorkingDir,
-			api.ConfigFilesLabel: strings.Join(project.ComposeFiles, ","),
-			api.OneoffLabel:      "False",
+// build downloads/updates the ichiran repository and builds the Docker containers.
+// NoCache parameter determines whether to use Docker build cache or not.
+func (id *Docker) build(NoCache bool) error {
+	log.Info().Msg("downloading ichiran repository...")
+	if _, err := os.Stat(filepath.Join(id.ichiranDir, ".git")); os.IsNotExist(err) {
+		log.Info().Msg("Local repository does not exist. Cloning...")
+		if err := cloneRepo("https://github.com/tshatrov/ichiran.git", id.ichiranDir); err != nil {
+			return fmt.Errorf("failed to clone repository: %w", err)
 		}
-		project.Services[name] = s
+	} else {
+		log.Info().Msg("Local repository exists. Pulling changes...")
+		if err := pullRepo(id.ichiranDir); err != nil {
+			return fmt.Errorf("failed to pull repository: %w", err)
+		}
+	}
+	if err := id.setupProject(); err != nil {
+		return fmt.Errorf("failed to setup project: %w", err)
+	}
+
+	buildOpts := api.BuildOptions{
+		Pull:     true,
+		Push:     false,
+		Progress: "auto",
+		NoCache:  NoCache,
+		Quiet:    false,
+		Services: id.project.ServiceNames(),
+		Deps:     false,
+	}
+
+	log.Info().Msg("building containers...")
+	if err := id.service.Build(id.ctx, id.project, buildOpts); err != nil {
+		log.Error().
+			Err(err).
+			Str("type", fmt.Sprintf("%T", err)).
+			Msg("build failed")
+		return fmt.Errorf("build failed: %w", err)
+	}
+
+	return nil
+}
+
+// up starts the ichiran containers and waits for initialization.
+// Returns error if containers fail to start or initialize within timeout.
+func (id *Docker) up() error {
+	if id.project == nil {
+		return ErrNotInitialized
 	}
 
 	buildOpts := api.BuildOptions{
@@ -237,47 +188,33 @@ func (id *Docker) Initialize() error {
 		Progress: "auto",
 		NoCache:  false,
 		Quiet:    false,
-		Services: project.ServiceNames(),
+		Services: id.project.ServiceNames(),
 		Deps:     false,
 	}
 
-	if needsBuild {
-		log.Info().Msg("building containers...")
-		err = id.service.Build(id.ctx, project, buildOpts)
-		if err != nil {
-			log.Error().
-				Err(err).
-				Str("type", fmt.Sprintf("%T", err)).
-				Msg("build failed")
-			return fmt.Errorf("build failed: %w", err)
-		}
-	}
 	log.Info().Msg("up-ing containers...")
-	go func() {
-		err = id.service.Up(id.ctx, project, api.UpOptions{
-			Create: api.CreateOptions{
-				Build:         &buildOpts,
-				Services:      project.ServiceNames(),
-				RemoveOrphans: true,
-				IgnoreOrphans: false,
-				Recreate:      api.RecreateNever,
-				Inherit:       false,
-				QuietPull:     false,
-			},
-			Start: api.StartOptions{
-				Wait:         true,
-				WaitTimeout:  DockerStartTO,
-				Project:      project,
-				Services:     project.ServiceNames(),
-				ExitCodeFrom: "main",
-				Attach:       id.logger,
-				//AttachTo: project.ServiceNames(),
-			},
-		})
-		if err != nil {
-			id.logger.failedChan <- fmt.Errorf("container startup failed: %v", err)
-		}
-	}()
+	err := id.service.Up(id.ctx, id.project, api.UpOptions{
+		Create: api.CreateOptions{
+			Build:         &buildOpts,
+			Services:      id.project.ServiceNames(),
+			RemoveOrphans: true,
+			IgnoreOrphans: false,
+			Recreate:      api.RecreateNever,
+			Inherit:       false,
+			QuietPull:     false,
+		},
+		Start: api.StartOptions{
+			Wait:         true,
+			WaitTimeout:  DockerStartTO,
+			Project:      id.project,
+			Services:     id.project.ServiceNames(),
+			ExitCodeFrom: "main",
+			Attach:       id.logger,
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("container startup failed: %w", err)
+	}
 
 	// Wait for initialization
 	log.Info().Msg("waiting for ichiran to initialize...")
@@ -290,62 +227,19 @@ func (id *Docker) Initialize() error {
 	case <-time.After(DockerStartTO):
 		return fmt.Errorf("timeout waiting for ichiran to initialize")
 	}
-	close(id.logger.initChan)
-	close(id.logger.failedChan)
 
 	status, err := id.Status()
 	if err != nil {
 		return fmt.Errorf("status check failed: %w", err)
 	}
-	if std(status) != api.RUNNING {
+	if status != api.RUNNING {
 		return fmt.Errorf("services failed to reach running state, current raw status: %s", status)
 	}
+
 	return nil
 }
 
-func cloneRepo(repoURL, localPath string) {
-	_, err := git.PlainClone(localPath, false, &git.CloneOptions{
-		URL:      repoURL,
-		Progress: os.Stdout,
-	})
-	if err != nil {
-		log.Error().Err(err).Msg("Failed to clone repository")
-		return
-	}
-	log.Info().Msg("Repository cloned successfully")
-}
-
-func pullRepo(tmpDir string) {
-	// Open the existing repository
-	repo, err := git.PlainOpen(tmpDir)
-	if err != nil {
-		log.Error().Err(err).Msg("Failed to open repository")
-		return
-	}
-
-	// Get the working tree
-	worktree, err := repo.Worktree()
-	if err != nil {
-		log.Error().Err(err).Msg("Failed to get worktree")
-		return
-	}
-
-	// Pull the latest changes
-	err = worktree.Pull(&git.PullOptions{
-		RemoteName: "origin",
-		Progress:   os.Stdout,
-	})
-	if err != nil {
-		if err == git.NoErrAlreadyUpToDate {
-			log.Info().Msg("Repository is already up-to-date")
-		} else {
-			log.Error().Err(err).Msg("Failed to pull repository")
-		}
-		return
-	}
-	log.Info().Msg("Repository updated successfully")
-}
-
+// Stop stops all running ichiran containers.
 func (id *Docker) Stop() error {
 	log.Info().Msg("stopping ichiran containers...")
 	return id.service.Stop(id.ctx, "ichiran", api.StopOptions{
@@ -353,12 +247,14 @@ func (id *Docker) Stop() error {
 	})
 }
 
+// Close is an alias for Stop, implementing io.Closer interface.
 func (id *Docker) Close() error {
 	return id.Stop()
 }
 
 
-
+// Status returns the current status of ichiran containers.
+// Returns one of the api status constants (RUNNING, STARTING, etc.).
 func (id *Docker) Status() (string, error) {
 	stacks, err := id.service.List(id.ctx, api.ListOptions{})
 	if err != nil {
@@ -367,7 +263,7 @@ func (id *Docker) Status() (string, error) {
 
 	for _, stack := range stacks {
 		if stack.Name == "ichiran" {
-			return stack.Status, nil
+			return std(stack.Status), nil
 		}
 	}
 	return api.UNKNOWN, nil
@@ -377,7 +273,58 @@ func (id *Docker) Status() (string, error) {
 
 
 
+// ############################################################################
+// ############################################################################
+// ############################################################################
 
+
+
+
+// setupProject initializes the Docker Compose project configuration.
+// Creates necessary labels and project structure.
+func (id *Docker) setupProject() error {
+	if id.project != nil {
+		return nil
+	}
+
+	options, err := cli.NewProjectOptions(
+		[]string{filepath.Join(id.ichiranDir, "docker-compose.yml")},
+		cli.WithOsEnv,
+		cli.WithDotEnv,
+		cli.WithName("ichiran"),
+		cli.WithWorkingDirectory(id.ichiranDir),
+	)
+	if err != nil {
+		return fmt.Errorf("failed to create project options: %w", err)
+	}
+
+	project, err := cli.ProjectFromOptions(id.ctx, options)
+	if err != nil {
+		return fmt.Errorf("failed to load project: %w", err)
+	}
+
+	x := 0
+	//color.Redf("project: %s,\tWorkingDir:%s\n", project.Name, project.WorkingDir)
+	for name, s := range project.Services {
+		//color.Redf("service: %d %s_%s_%#v\n", x, name, s.ContainerName, s.Entrypoint)
+		x += 1
+		s.CustomLabels = map[string]string{
+			api.ProjectLabel:     project.Name,
+			api.ServiceLabel:     name,
+			api.VersionLabel:     api.ComposeVersion,
+			api.WorkingDirLabel:  project.WorkingDir,
+			api.ConfigFilesLabel: strings.Join(project.ComposeFiles, ","),
+			api.OneoffLabel:      "False",
+		}
+		project.Services[name] = s
+	}
+
+	id.project = project
+	return nil
+}
+
+// checkIfBuildNeeded determines if containers need rebuilding.
+// Checks git repository status and container existence.
 func checkIfBuildNeeded(ichiranDir string) (bool, error) {
 	// Check if the git repository exists by looking for .git directory
 	gitDir := filepath.Join(ichiranDir, ".git")
@@ -472,11 +419,54 @@ func checkIfBuildNeeded(ichiranDir string) (bool, error) {
 	return false, nil
 }
 
+
+func cloneRepo(repoURL, localPath string) error {
+	_, err := git.PlainClone(localPath, false, &git.CloneOptions{
+		URL:      repoURL,
+		Progress: os.Stdout,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to clone repository: %w", err)
+	}
+	log.Info().Msg("Repository cloned successfully")
+	return nil
+}
+
+func pullRepo(localPath string) error {
+	repo, err := git.PlainOpen(localPath)
+	if err != nil {
+		return fmt.Errorf("failed to open repository: %w", err)
+	}
+
+	worktree, err := repo.Worktree()
+	if err != nil {
+		return fmt.Errorf("failed to get worktree: %w", err)
+	}
+
+	err = worktree.Pull(&git.PullOptions{
+		RemoteName: "origin",
+		Progress:   os.Stdout,
+	})
+	if err != nil {
+		if err == git.NoErrAlreadyUpToDate {
+			log.Info().Msg("Repository is already up-to-date")
+			return nil
+		}
+		return fmt.Errorf("failed to pull repository: %w", err)
+	}
+	log.Info().Msg("Repository updated successfully")
+	return nil
+}
+
+// getIchiranDir returns the platform-specific ichiran configuration directory.
 func getIchiranDir() (string, error) {
 	// Get the base config directory following platform conventions
 	configPath, err := xdg.ConfigFile("ichiran")
 	if err != nil {
 		return "", fmt.Errorf("failed to get config directory: %w", err)
+	}
+	if err := os.MkdirAll(configPath, 0755); err != nil {
+		return "", fmt.Errorf("failed to create ichiran directory: %w", err)
 	}
 	return configPath, nil
 }
@@ -484,6 +474,8 @@ func getIchiranDir() (string, error) {
 
 
 // fmt of status isn't that of api constants, I've had: running(2), Unknown
+// std standardizes container status strings to api constants.
+// Converts various status formats to standard api status constants.
 func std(status string) string {
 	status = strings.ToUpper(status)
 	switch {
