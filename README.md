@@ -9,8 +9,7 @@ A Go library for Japanese text analysis using the [Ichiran](https://github.com/t
 -  Romaji (romanization) support
 -  Part-of-speech tagging
 -  Conjugation analysis
--  Docker-based deployment
--  LLM-generated README
+-  Download & manage the docker containers directly using the Docker Compose Go API
 
 ## Installation
 
@@ -29,22 +28,13 @@ func main() {
 	}
 	defer docker.Close()
 
-	// Initialize the environment (downloads and starts containers if needed)
-	// NOTE: if you have 'exec: "ichiran-cli": executable file not found' errors,
-	// use docker.InitForce() to bypass cache and force rebuild from scratch.
+	// Initialize the environment (downloads, builds and starts containers if they are not running)
 	if err := docker.Init(); err != nil {
 		panic(err)
 	}
 
-	// Create an Ichiran client
-	client, err := ichiran.NewClient(ichiran.DefaultConfig())
-	if err != nil {
-		panic(err)
-	}
-	defer client.Close()
-
 	// Analyze Japanese text
-	tokens, err := client.Analyze("私は日本語を勉強しています。")
+	tokens, err := ichiran.Analyze("私は日本語を勉強しています。")
 	if err != nil {
 		panic(err)
 	}
@@ -56,7 +46,7 @@ func main() {
 	fmt.Println("Gloss:", tokens.GlossString())
 }
 ```
-
+ 
 ### Output
 
 ```
@@ -65,6 +55,14 @@ Kana: わたし ‌は にほんご を べんきょう しています .
 Romaji: watashi wa nihongo wo benkyō shiteimasu . 
 Gloss: 私(I; me) は(indicates sentence topic; indicates contrast with another option (stated or unstated); adds emphasis) 日本語(Japanese (language)) を(indicates direct object of action; indicates subject of causative expression; indicates an area traversed; indicates time (period) over which action takes place; indicates point of departure or separation of action; indicates object of desire, like, hate, etc.) . 
 ```
+
+Note: if you have 'exec: "ichiran-cli": executable file not found' errors, remove directory ./docker/pgdata (as recommended by README of ichiran repo) at location below and use docker.InitForce() to bypass cache and force rebuild from scratch.
+
+## Docker compose containers' location
+
+- Linux: ~/.config/ichiran
+- macOS: ~/Library/Application Support/ichiran
+- Windows: %LOCALAPPDATA%\ichiran
 
 ## Requirements
 
@@ -134,11 +132,6 @@ Gloss: 私(I; me) は(indicates sentence topic; indicates contrast with another 
    sudo usermod -aG docker $USER
    # Log out and back in for changes to take effect
    ```
-## Docker compose containers' location
-
-- Linux: ~/.config/ichiran
-- macOS: ~/Library/Application Support/ichiran
-- Windows: %LOCALAPPDATA%\ichiran
 
 ## Alternatives
 
