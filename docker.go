@@ -27,7 +27,16 @@ import (
 	"github.com/docker/compose/v2/pkg/compose"
 )
 
+/*
+Libraries:
+https://pkg.go.dev/github.com/docker/compose/v2@v2.32.1/pkg/compose#NewComposeService
+https://pkg.go.dev/github.com/docker/compose/v2@v2.32.1/pkg/api#Service
+https://pkg.go.dev/github.com/docker/cli@v27.4.1+incompatible/cli/command
+https://pkg.go.dev/github.com/docker/cli@v27.4.1+incompatible/cli/flags
+*/
+
 const remote = "https://github.com/tshatrov/ichiran.git"
+
 
 var (
 	// DockerStartTO is the timeout duration for starting Docker containers.
@@ -39,8 +48,9 @@ var (
 
 
 func init() {
-	//log.Logger = zerolog.New(zerolog.ConsoleWriter{Out: os.Stderr, TimeFormat: time.TimeOnly}).With().Timestamp().Logger()
+	// logger internal to the library. For the logger relaying docker's log see logger.go's IchiranLogConsumer.Level
 	log.Logger = zerolog.Nop()
+	//log.Logger = zerolog.New(zerolog.ConsoleWriter{Out: os.Stderr, TimeFormat: time.TimeOnly}).With().Timestamp().Logger()
 }
 
 // Docker represents a Docker service manager for ichiran containers.
@@ -79,17 +89,23 @@ func NewDocker() (*Docker, error) {
 // Init initializes the ichiran Docker environment.
 // It sets up the project directory and starts containers if needed.
 func (id *Docker) Init() error {
-	return id.initialize(false)
+	return id.initialize(false, false)
+}
+
+// Similar to Init but reduce verbosity of progress output of Docker management (Build, Up,...)
+func (id *Docker) InitQuiet() error {
+	return id.initialize(false, true)
 }
 
 // InitForce initializes the ichiran Docker environment with forced rebuild.
 // Similar to Init but forces container rebuilding.
 func (id *Docker) InitForce() error {
 	DockerStartTO = DockerRebuildTO
-	return id.initialize(true)
+	return id.initialize(true, false)
 }
 
-func (id *Docker) initialize(NoCache bool) (err error) {
+
+func (id *Docker) initialize(NoCache, Quiet bool) (err error) {
 	if id.ichiranDir, err = getIchiranDir(); err != nil {
 		return fmt.Errorf("failed to get ichiran directory: %w", err)
 	}
@@ -126,7 +142,7 @@ func (id *Docker) initialize(NoCache bool) (err error) {
 
 	if needsBuild {
 		DockerStartTO = DockerRebuildTO
-		if err := id.build(NoCache); err != nil {
+		if err := id.build(NoCache, Quiet); err != nil {
 			return fmt.Errorf("build failed: %w", err)
 		}
 	}
@@ -140,11 +156,11 @@ func (id *Docker) initialize(NoCache bool) (err error) {
 
 // build downloads/updates the ichiran repository and builds the Docker containers.
 // NoCache parameter determines whether to use Docker build cache or not.
-func (id *Docker) build(NoCache bool) error {
+func (id *Docker) build(NoCache, Quiet bool) error {
 	log.Info().Msg("downloading ichiran repository...")
 	if _, err := os.Stat(filepath.Join(id.ichiranDir, ".git")); os.IsNotExist(err) {
 		log.Info().Msg("Local repository does not exist. Cloning...")
-		if err := cloneRepo("https://github.com/tshatrov/ichiran.git", id.ichiranDir); err != nil {
+		if err := cloneRepo(remote, id.ichiranDir); err != nil {
 			return fmt.Errorf("failed to clone repository: %w", err)
 		}
 	} else {
@@ -156,13 +172,9 @@ func (id *Docker) build(NoCache bool) error {
 	if err := id.setupProject(); err != nil {
 		return fmt.Errorf("failed to setup project: %w", err)
 	}
-
 	buildOpts := api.BuildOptions{
-		Pull:     true,
-		Push:     false,
-		Progress: "auto",
 		NoCache:  NoCache,
-		Quiet:    false,
+		Quiet:    Quiet,
 		Services: id.project.ServiceNames(),
 		Deps:     false,
 	}
@@ -182,32 +194,19 @@ func (id *Docker) build(NoCache bool) error {
 // up starts the ichiran containers and waits for initialization.
 // Returns error if containers fail to start or initialize within timeout.
 func (id *Docker) up() error {
+	log.Info().Msg("up-ing containers...")
 	if id.project == nil {
 		return ErrNotInitialized
 	}
 
-	buildOpts := api.BuildOptions{
-		Pull:     true,
-		Push:     false,
-		Progress: "auto",
-		NoCache:  false,
-		Quiet:    false,
-		Services: id.project.ServiceNames(),
-		Deps:     false,
-	}
-
-	log.Info().Msg("up-ing containers...")
-	
 	go func(){
 		err := id.service.Up(id.ctx, id.project, api.UpOptions{
 			Create: api.CreateOptions{
-				Build:         &buildOpts,
 				Services:      id.project.ServiceNames(),
 				RemoveOrphans: true,
 				IgnoreOrphans: false,
 				Recreate:      api.RecreateNever,
 				Inherit:       false,
-				QuietPull:     false,
 			},
 			Start: api.StartOptions{
 				Wait:         true,

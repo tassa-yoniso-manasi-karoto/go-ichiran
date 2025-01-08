@@ -25,9 +25,7 @@ type IchiranLogConsumer struct {
 func NewIchiranLogConsumer() *IchiranLogConsumer {
 	return &IchiranLogConsumer{
 		Prefix:      "ichiran",
-		ShowService: true,
-		ShowType:    true,
-		Level:       zerolog.DebugLevel,
+		Level:       zerolog.Disabled, // DebugLevel, Disabled...
 		initChan:    make(chan struct{}),
 		failedChan:  make(chan error),
 	}
@@ -39,6 +37,10 @@ func (l *IchiranLogConsumer) Log(containerName, message string) {
 		case l.initChan <- struct{}{}:
 		default: // Channel already closed or message already sent
 		}
+	}
+	
+	if l.Level == zerolog.Disabled {
+		return
 	}
 
 	// Regular logging
@@ -66,6 +68,10 @@ func (l *IchiranLogConsumer) Log(containerName, message string) {
 }
 
 func (l *IchiranLogConsumer) Err(containerName, message string) {
+	if l.Level == zerolog.Disabled {
+		return
+	}
+	
 	lines := strings.Split(message, "\n")
 	for _, line := range lines {
 		if line = strings.TrimSpace(line); line != "" {
@@ -86,6 +92,10 @@ func (l *IchiranLogConsumer) Err(containerName, message string) {
 }
 
 func (l *IchiranLogConsumer) Status(container, msg string) {
+	if l.Level == zerolog.Disabled {
+		return
+	}
+	
 	event := log.Info()
 	if l.ShowService {
 		event = event.Str("service", container)

@@ -27,14 +27,6 @@ import (
 	//"github.com/docker/docker/client"
 )
 
-/*
-Libraries:
-https://pkg.go.dev/github.com/docker/compose/v2@v2.32.1/pkg/compose#NewComposeService
-https://pkg.go.dev/github.com/docker/compose/v2@v2.32.1/pkg/api#Service
-https://pkg.go.dev/github.com/docker/cli@v27.4.1+incompatible/cli/command
-https://pkg.go.dev/github.com/docker/cli@v27.4.1+incompatible/cli/flags
-*/
-
 const (
 	ContainerName = "ichiran-main-1"
 )
