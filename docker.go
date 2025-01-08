@@ -42,8 +42,7 @@ var (
 	// DockerStartTO is the timeout duration for starting Docker containers.
 	DockerStartTO = 300 * time.Second
 	DockerRebuildTO = 30 * time.Minute
-	ErrIsAlreadyRunning = errors.New("ichiran containers are already running")
-	ErrNotInitialized = errors.New("project not initialized, was Init() called?")
+	errNotInitialized = errors.New("project not initialized, was Init() called?")
 )
 
 
@@ -157,6 +156,9 @@ func (id *Docker) initialize(NoCache, Quiet bool) (err error) {
 // build downloads/updates the ichiran repository and builds the Docker containers.
 // NoCache parameter determines whether to use Docker build cache or not.
 func (id *Docker) build(NoCache, Quiet bool) error {
+	if id.project == nil {
+		return errNotInitialized
+	}
 	log.Info().Msg("downloading ichiran repository...")
 	if _, err := os.Stat(filepath.Join(id.ichiranDir, ".git")); os.IsNotExist(err) {
 		log.Info().Msg("Local repository does not exist. Cloning...")
@@ -196,7 +198,7 @@ func (id *Docker) build(NoCache, Quiet bool) error {
 func (id *Docker) up() error {
 	log.Info().Msg("up-ing containers...")
 	if id.project == nil {
-		return ErrNotInitialized
+		return errNotInitialized
 	}
 
 	go func(){
