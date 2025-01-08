@@ -417,6 +417,8 @@ func readDockerOutput(reader io.Reader) ([]byte, error) {
 	return bytes.TrimSpace(output.Bytes()), nil
 }
 
+// IMPORTANT: jsonformatter.org is very helpful to help understand ichiran's JSON:
+// 	as it both prettifies and converts unicode codepoints to literals
 
 // extractTokens converts raw JSON data into structured token information.
 func extractTokens(group []interface{}) []JSONToken {
