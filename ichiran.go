@@ -88,7 +88,7 @@ type Prop struct {
 // FIXME update the methods to target *JSONTokens
 
 // TokenizedStr returns a string of all tokens separated by spaces or commas.
-func (tokens JSONTokens) TokenizedStr() string {
+func (tokens JSONTokens) Tokenized() string {
 	var parts []string
 	for _, token := range tokens {
 		if token.IsToken {
@@ -171,7 +171,7 @@ func (tokens JSONTokens) RomanParts() []string {
 }
 
 // GlossString returns a formatted string containing tokens and their English glosses.
-func (tokens JSONTokens) GlossString() string {
+func (tokens JSONTokens) Glosses() string {
 	var parts []string
 	for _, token := range tokens {
 		if token.IsToken {
@@ -190,6 +190,8 @@ func (tokens JSONTokens) GlossString() string {
 	}
 	return strings.Join(parts, " ")
 }
+
+
 
 //############################################################################
 
@@ -454,7 +456,6 @@ func parseOutput(output []byte) (JSONTokens, error) {
 	var rawResult []interface{}
 	decoder := json.NewDecoder(bytes.NewReader(output))
 	decoder.UseNumber()
-
 	if err := decoder.Decode(&rawResult); err != nil {
 		println(stringCapLen(string(output), 1000))
 		log.Fatal().Err(err).Msg("failed to decode JSON")
@@ -502,7 +503,6 @@ func parseOutput(output []byte) (JSONTokens, error) {
 // decodeToken processes Unicode escapes and other encodings in token fields.
 func decodeToken(token *JSONToken) error {
 	var err error
-
 	if token.Surface, err = unescapeUnicodeString(token.Surface); err != nil {
 		log.Debug().Err(err).Msgf("failed to decode Surface: %s", token.Surface)
 		return fmt.Errorf("failed to decode Surface: %w", err)
@@ -519,8 +519,12 @@ func decodeToken(token *JSONToken) error {
 	return nil
 }
 
-// unescapeUnicodeString converts JSON Unicode escapes (\uXXXX) to actual characters
+// unescapeUnicodeString converts Unicode escapes (\uXXXX) to actual characters
 func unescapeUnicodeString(s string) (string, error) {
+	// Kana field can contain a forbidden jutsu: \u200c = ZERO WIDTH NON-JOINER
+	// however it is (apparently) automatically rendered by JSON decoder from its codepoint into a literal in Go
+	// so it must replaced manually. 
+	s = strings.ReplaceAll(s, /*ZERO WIDTH NON-JOINER*/"‌", "")
 	// If the string doesn't contain any \u, return as is
 	if !strings.Contains(s, "\\u") {
 		return s, nil
