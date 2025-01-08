@@ -11,7 +11,7 @@ import (
 )
 
 
-type IchiranLogConsumer struct {
+type ichiranLogConsumer struct {
 	Prefix      string
 	ShowService bool
 	ShowType    bool
@@ -22,8 +22,8 @@ type IchiranLogConsumer struct {
 
 
 
-func NewIchiranLogConsumer() *IchiranLogConsumer {
-	return &IchiranLogConsumer{
+func newIchiranLogConsumer() *ichiranLogConsumer {
+	return &ichiranLogConsumer{
 		Prefix:      "ichiran",
 		Level:       zerolog.Disabled, // DebugLevel, Disabled...
 		initChan:    make(chan struct{}),
@@ -31,7 +31,7 @@ func NewIchiranLogConsumer() *IchiranLogConsumer {
 	}
 }
 
-func (l *IchiranLogConsumer) Log(containerName, message string) {
+func (l *ichiranLogConsumer) Log(containerName, message string) {
 	if strings.Contains(message, "All set, awaiting commands") {
 		select {
 		case l.initChan <- struct{}{}:
@@ -67,7 +67,7 @@ func (l *IchiranLogConsumer) Log(containerName, message string) {
 	}
 }
 
-func (l *IchiranLogConsumer) Err(containerName, message string) {
+func (l *ichiranLogConsumer) Err(containerName, message string) {
 	if l.Level == zerolog.Disabled {
 		return
 	}
@@ -91,7 +91,7 @@ func (l *IchiranLogConsumer) Err(containerName, message string) {
 	}
 }
 
-func (l *IchiranLogConsumer) Status(container, msg string) {
+func (l *ichiranLogConsumer) Status(container, msg string) {
 	if l.Level == zerolog.Disabled {
 		return
 	}
@@ -110,7 +110,7 @@ func (l *IchiranLogConsumer) Status(container, msg string) {
 	event.Msg(msg)
 }
 
-func (l *IchiranLogConsumer) Register(container string) {
+func (l *ichiranLogConsumer) Register(container string) {
 	log.Info().
 		Str("container", container).
 		Str("type", "register").

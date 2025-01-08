@@ -82,7 +82,7 @@ func NewDocker() (*Docker, error) {
 	return &Docker{
 		service: service,
 		ctx:     context.Background(),
-		logger:  NewIchiranLogConsumer(),
+		logger:  newIchiranLogConsumer(),
 	}, nil
 }
 
