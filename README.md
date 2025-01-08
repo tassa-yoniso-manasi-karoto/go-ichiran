@@ -44,7 +44,6 @@ func main() {
 	fmt.Printf("KanaParts: %#v\n",		tokens.KanaParts())
 	fmt.Printf("Roman: %#v\n",		tokens.Roman())
 	fmt.Printf("RomanParts: %#v\n",		tokens.RomanParts())
-	fmt.Printf("Gloss: %#v\n",		tokens.Gloss())
 	fmt.Printf("GlossParts: %#v\n",		tokens.GlossParts())
 }
 ```
@@ -58,13 +57,16 @@ Kana: "わたし は にほんご を べんきょう しています . "
 KanaParts: []string{"わたし", "は", "にほんご", "を", "べんきょう しています", ". "}
 Roman: "watashi wa nihongo wo benkyō shiteimasu . "
 RomanParts: []string{"watashi", "wa", "nihongo", "wo", "benkyō shiteimasu", ". "}
-Gloss: "私(I; me) は(indicates sentence topic; indicates contrast with another option (stated or unstated); adds emphasis) 日本語(Japanese (language)) を(indicates direct object of action; indicates subject of causative expression; indicates an area traversed; indicates time (period) over which action takes place; indicates point of departure or separation of action; indicates object of desire, like, hate, etc.) . "
 GlossParts: []string{"私(I; me)",
-	"は(indicates sentence topic; indicates contrast with another option (stated or unstated); adds emphasis)",
-	"日本語(Japanese (language))",
-	"を(indicates direct object of action; indicates subject of causative expression; indicates an area traversed; indicates time (period) over which action takes place; indicates point of departure or separation of action; indicates object of desire, like, hate, etc.)",
-	". "} 
+	"は (indicates sentence topic; indicates contrast with another option (stated or unstated); adds emphasis)",
+	"日本語 (Japanese (language))",
+	"を (indicates direct object of action; indicates subject of causative expression; indicates an area traversed; indicates time (period) over which action takes place; indicates point of departure or separation of action; indicates object of desire, like, hate, etc.)",
+	"勉強 (study; diligence; working hard; experience; lesson (for the future); discount; price reduction)",
+	"して (to do; to carry out; to perform; to cause to become; to make (into); to turn (into); to serve as; to act as; to work as; to wear (clothes, a facial expression, etc.); to judge as being; to view as being; to think of as; to treat as; to use as; to decide on; to choose; to be sensed (of a smell, noise, etc.); to be (in a state, condition, etc.); to be worth; to cost; to pass (of time); to elapse; to place, or raise, person A to a post or status B; to transform A to B; to make A into B; to exchange A for B; to make use of A for B; to view A as B; to handle A as if it were B; to feel A about B; verbalizing suffix (applies to nouns noted in this dictionary with the part of speech \"vs\"); creates a humble verb (after a noun prefixed with \"o\" or \"go\"); to be just about to; to be just starting to; to try to; to attempt to)",
+	"います (to be (of animate objects); to exist; to stay; to be ...-ing; to have been ...-ing)",
+	". "}
 ```
+
 
 > [!TIP]
 > if you have 'exec: "ichiran-cli": executable file not found' errors, remove directory ./docker/pgdata (as recommended by README of ichiran repo) at location below and use docker.InitForce() to bypass cache and force rebuild from scratch.

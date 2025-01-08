@@ -14,6 +14,7 @@ import (
 	"regexp"
 	"strings"
 	"time"
+	//"os"
 
 	"github.com/gookit/color"
 	"github.com/k0kubun/pp"
@@ -45,7 +46,7 @@ func init() {
 
 // JSONToken represents a single token with all its analysis information
 type JSONToken struct {
-	Surface     string `json:"text"`		// Original text
+	Surface     string 	`json:"text"`		// Original text
 	IsToken     bool				// Whether this is a Japanese token or non-Japanese text
 	Reading     string      `json:"reading"`	// Reading with kanji and kana
 	Kana        string      `json:"kana"`		// Kana reading
@@ -55,9 +56,42 @@ type JSONToken struct {
 	Gloss       []Gloss     `json:"gloss"`          // English meanings
 	Conj        []Conj      `json:"conj,omitempty"` // Conjugation information
 	Alternative []JSONToken `json:"alternative"`    // Alternative interpretations
-	//Compound	[]string   `json:"compound"`		  // Delineable elements of compound expressions
-	//Components  []JSONToken	`json:"components"`		// Details of delineable elements of compound expressions
+	Compound    []string    `json:"compound"`	// Delineable elements of compound expressions
+	Components  []JSONToken	`json:"components"`	// Details of delineable elements of compound expressions
 	Raw []byte `json:"-"`				// Raw JSON for future processing
+}
+
+// in case of multiple alternative, jsonTokenCore represents the essential information that are shared,
+// that will spearhead the JSONToken for consistency's sake
+type jsonTokenCore struct {
+	Surface     string 	`json:"text"`		// Original text
+	IsToken     bool				// Whether this is a Japanese token or non-Japanese text
+	Reading     string      `json:"reading"`	// Reading with kanji and kana
+	Kana        string      `json:"kana"`		// Kana reading
+	Romaji      string				// Romanized form from ichiran
+	Score       int         `json:"score"`          // Analysis score
+}
+
+// extractCore returns only the core fields from a JSONToken
+func extractCore(token JSONToken) jsonTokenCore {
+	return jsonTokenCore{
+		Surface: token.Surface,
+		IsToken: token.IsToken,
+		Reading: token.Reading,
+		Kana:    token.Kana,
+		Romaji:  token.Romaji,
+		Score:   token.Score,
+	}
+}
+
+// applyCore applies the core fields to a JSONToken
+func (token *JSONToken) applyCore(core jsonTokenCore) {
+	token.Surface = core.Surface
+	token.IsToken = core.IsToken
+	token.Reading = core.Reading
+	token.Kana = core.Kana
+	token.Romaji = core.Romaji
+	token.Score = core.Score
 }
 
 // JSONTokens is a slice of token pointers representing a complete analysis result.
@@ -139,30 +173,116 @@ func (tokens JSONTokens) RomanParts() (parts []string) {
 	return
 }
 
-// Gloss returns a formatted string containing tokens and their English glosses.
+// ToMorphemes returns a new slice of tokens where compound tokens are replaced by their constituent morphemes
+func (tokens JSONTokens) ToMorphemes() JSONTokens {
+	var morphemes JSONTokens
+
+	for _, token := range tokens {
+		// If token has components, add them instead of the original token
+		if len(token.Components) > 0 {
+			for _, component := range token.Components {
+				// Create a copy of the component
+				morpheme := &JSONToken{
+					Surface:     component.Surface,
+					IsToken:     true, // Components are always tokens
+					Reading:     component.Reading,
+					Kana:        component.Kana,
+					Romaji:      component.Romaji,
+					Score:       component.Score,
+					Seq:         component.Seq,
+					Gloss:       component.Gloss,
+					Conj:        component.Conj,
+					Alternative: component.Alternative,
+					Compound:    component.Compound,
+					Components:  component.Components,
+					Raw:        component.Raw,
+				}
+				morphemes = append(morphemes, morpheme)
+			}
+		} else {
+			// If no components, add the original token
+			morphemes = append(morphemes, token)
+		}
+	}
+
+	return morphemes
+}
+
+// Gloss returns a formatted string containing tokens and their English glosses
+// including morphemes and alternative interpretations.
 func (tokens JSONTokens) Gloss() string {
 	parts := tokens.GlossParts()
 	return strings.Join(parts, " ")
 }
 
-// GlossParts returns a slice fo strings containing tokens and their English glosses.
+
+// GlossParts returns a slice of strings containing tokens and their English glosses,
+// including morphemes and alternative interpretations.
 func (tokens JSONTokens) GlossParts() (parts []string) {
-	for _, token := range tokens {
-		if token.IsToken {
-			var glosses []string
-			for _, g := range token.Gloss {
-				glosses = append(glosses, g.Gloss)
+	morphemes := tokens.ToMorphemes()
+	
+	for _, token := range morphemes {
+		if !token.IsToken {
+			parts = append(parts, token.Surface)
+			continue
+		}
+
+		// Handle tokens with alternatives
+		if len(token.Alternative) > 0 {
+			var altGlosses []string
+			
+			// Add glosses from each alternative
+			for i, alt := range token.Alternative {
+				glosses := alt.getGlosses()
+				if len(glosses) > 0 {
+					altGlosses = append(altGlosses, fmt.Sprintf("ALT%d: %s",
+						i+1,
+						strings.Join(glosses, "; ")))
+				}
 			}
-			if len(glosses) > 0 {
-				parts = append(parts, fmt.Sprintf("%s(%s)",
+			
+			if len(altGlosses) > 0 {
+				parts = append(parts, fmt.Sprintf("%s (%s)",
 					token.Surface,
-					strings.Join(glosses, "; ")))
+					strings.Join(altGlosses, " | ")))
+			} else {
+				parts = append(parts, token.Surface)
 			}
+			continue
+		}
+
+		// Handle regular tokens
+		glosses := token.getGlosses()
+		if len(glosses) > 0 {
+			parts = append(parts, fmt.Sprintf("%s(%s)",
+				token.Surface,
+				strings.Join(glosses, "; ")))
 		} else {
 			parts = append(parts, token.Surface)
 		}
 	}
+	
 	return
+}
+
+
+/// getGlosses extracts all glosses from both direct Gloss field and Conj field
+func (token *JSONToken) getGlosses() []string {
+	var glosses []string
+	
+	// Add direct glosses
+	for _, g := range token.Gloss {
+		glosses = append(glosses, g.Gloss)
+	}
+	
+	// Add glosses from conjugations
+	for _, c := range token.Conj {
+		for _, g := range c.Gloss {
+			glosses = append(glosses, g.Gloss)
+		}
+	}
+	
+	return glosses
 }
 
 
@@ -323,7 +443,7 @@ func extractTokens(group []interface{}) []JSONToken {
 
 	// Process each token group
 	for _, tokenGroup := range tokenGroups {
-		// Skip if it's a number (like the "192" in your example)
+		// Skip if it's a number, I guess it's something internal to ichiran idk
 		if _, ok := tokenGroup.(json.Number); ok {
 			continue
 		}
@@ -392,8 +512,15 @@ func extractTokens(group []interface{}) []JSONToken {
 			}
 
 			if len(alternatives) > 0 {
-				token = alternatives[0] // Use first alternative as main token
-				token.Alternative = alternatives[1:]
+				// Extract core fields from first alternative
+				core := extractCore(alternatives[0])
+				
+				// Create new token with only core fields: it will be the "main"/visible token in JSONTokens
+				token = JSONToken{}
+				token.applyCore(core)
+				
+				// Store all alternatives
+				token.Alternative = alternatives
 			} else {
 				continue // Skip if no valid alternatives
 			}
