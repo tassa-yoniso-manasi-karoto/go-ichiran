@@ -96,6 +96,7 @@ func (id *Docker) initialize(NoCache bool) (err error) {
 	
 	var needsBuild bool
 	if err := id.setupProject(); err != nil {
+		log.Warn().Err(err).Msg("setupProject() returned an error")
 		needsBuild = true
 	}
 	

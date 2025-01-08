@@ -24,7 +24,7 @@ import (
 	"github.com/docker/cli/cli/command"
 	"github.com/docker/cli/cli/flags"
 	"github.com/docker/docker/api/types"
-	"github.com/docker/docker/client"
+	//"github.com/docker/docker/client"
 )
 
 /*
@@ -35,8 +35,13 @@ https://pkg.go.dev/github.com/docker/cli@v27.4.1+incompatible/cli/command
 https://pkg.go.dev/github.com/docker/cli@v27.4.1+incompatible/cli/flags
 */
 
+const (
+	ContainerName = "ichiran-main-1"
+)
+
 var (
 	reMultipleSpacesSeq = regexp.MustCompile(`\s{2,}`)
+	QueryTO =  1 * time.Hour
 )
 
 func init() {
@@ -174,56 +179,34 @@ func (tokens JSONTokens) RomanParts() []string {
 }
 
 // GlossString returns a formatted string containing tokens and their English glosses.
-// func (tokens JSONTokens) GlossString() string {
-// 	var parts []string
-// 	for _, token := range tokens {
-// 		if token.IsToken {
-// 			var glosses []string
-// 			for _, g := range token.Gloss {
-// 				glosses = append(glosses, g.Gloss)
-// 			}
-// 			if len(glosses) > 0 {
-// 				parts = append(parts, fmt.Sprintf("%s(%s)",
-// 					token.Surface,
-// 					strings.Join(glosses, "; ")))
-// 			}
-// 		} else {
-// 			parts = append(parts, token.Surface)
-// 		}
-// 	}
-// 	return strings.Join(parts, " ")
-// }
+func (tokens JSONTokens) GlossString() string {
+	var parts []string
+	for _, token := range tokens {
+		if token.IsToken {
+			var glosses []string
+			for _, g := range token.Gloss {
+				glosses = append(glosses, g.Gloss)
+			}
+			if len(glosses) > 0 {
+				parts = append(parts, fmt.Sprintf("%s(%s)",
+					token.Surface,
+					strings.Join(glosses, "; ")))
+			}
+		} else {
+			parts = append(parts, token.Surface)
+		}
+	}
+	return strings.Join(parts, " ")
+}
 
 //############################################################################
 
-// Config defines configuration options for the ichiran client.
-type Config struct {
-	ContainerName string // e.g., "ichiran-main-1"
-	ImageName     string // e.g., "ichiran-main"
-	Timeout       time.Duration
-	Debug         bool
-}
-
-// DefaultConfig returns a Config with default settings.
-func DefaultConfig() Config {
-	return Config{
-		ContainerName: "ichiran-main-1",
-		ImageName:     "ichiran-main",
-		Timeout:       10000 * time.Second,
-		Debug:         false,
-	}
-}
-
-// Client represents an ichiran client that communicates with the Docker container.
-type Client struct {
-	cli     command.Cli
-	docker  client.APIClient
-	config  Config
-}
-
-
-// NewClient creates a new ichiran client with the given configuration.
-func NewClient(config Config) (*Client, error) {
+// Analyze performs morphological analysis on the input Japanese text.
+// Returns parsed tokens or an error if analysis fails.
+func Analyze(text string) (*JSONTokens, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), QueryTO)
+	defer cancel()
+	
 	// Initialize Docker CLI
 	cli, err := command.NewDockerCli(
 		command.WithStandardStreams(),
@@ -235,39 +218,16 @@ func NewClient(config Config) (*Client, error) {
 	if err := cli.Initialize(flags.NewClientOptions()); err != nil {
 		return nil, fmt.Errorf("failed to initialize Docker CLI: %w", err)
 	}
-
-	// Get the underlying Docker client
 	docker := cli.Client()
 
-	return &Client{
-		cli:    cli,
-		docker: docker,
-		config: config,
-	}, nil
-}
-
-// Close releases resources associated with the client.
-func (c *Client) Close() error {
-	if closer, ok := c.docker.(io.Closer); ok {
-		return closer.Close()
-	}
-	return nil
-}
-
-// Analyze performs morphological analysis on the input Japanese text.
-// Returns parsed tokens or an error if analysis fails.
-func (c *Client) Analyze(text string) (*JSONTokens, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), c.config.Timeout)
-	defer cancel()
-
 	// Check container status
-	containerInfo, err := c.docker.ContainerInspect(ctx, c.config.ContainerName)
+	containerInfo, err := docker.ContainerInspect(ctx, ContainerName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to inspect container: %w", err)
 	}
 
 	if !containerInfo.State.Running {
-		return nil, fmt.Errorf("container %s is not running", c.config.ContainerName)
+		return nil, fmt.Errorf("container %s is not running", ContainerName)
 	}
 
 	// Prepare command
@@ -288,13 +248,13 @@ func (c *Client) Analyze(text string) (*JSONTokens, error) {
 	}
 
 	// Create execution
-	exec, err := c.docker.ContainerExecCreate(ctx, c.config.ContainerName, execConfig)
+	exec, err := docker.ContainerExecCreate(ctx, ContainerName, execConfig)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create exec: %w", err)
 	}
 
 	// Attach to execution
-	resp, err := c.docker.ContainerExecAttach(ctx, exec.ID, types.ExecStartCheck{})
+	resp, err := docker.ContainerExecAttach(ctx, exec.ID, types.ExecStartCheck{})
 	if err != nil {
 		return nil, fmt.Errorf("failed to attach to exec: %w", err)
 	}
@@ -307,7 +267,7 @@ func (c *Client) Analyze(text string) (*JSONTokens, error) {
 	}
 
 	// Check execution status
-	inspect, err := c.docker.ContainerExecInspect(ctx, exec.ID)
+	inspect, err := docker.ContainerExecInspect(ctx, exec.ID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to inspect exec: %w", err)
 	}
@@ -326,15 +286,6 @@ func (c *Client) Analyze(text string) (*JSONTokens, error) {
 	return &tokens, nil
 }
 
-// GetCLI returns the underlying Docker CLI instance
-func (c *Client) GetCLI() command.Cli {
-	return c.cli
-}
-
-// GetDockerClient returns the underlying Docker client
-func (c *Client) GetDockerClient() client.APIClient {
-	return c.docker
-}
 
 // safe escapes special characters in the input text for shell command usage.
 func safe(text string) (s string) {
