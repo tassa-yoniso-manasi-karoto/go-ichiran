@@ -85,94 +85,68 @@ type Prop struct {
 	Neg  bool   `json:"neg"`  // Negation flag
 }
 
-// FIXME update the methods to target *JSONTokens
 
 // TokenizedStr returns a string of all tokens separated by spaces or commas.
 func (tokens JSONTokens) Tokenized() string {
-	var parts []string
-	for _, token := range tokens {
-		if token.IsToken {
-			parts = append(parts, token.Surface)
-		} else {
-			parts = append(parts, token.Surface) // non-Japanese content
-		}
-	}
+	parts := tokens.TokenizedParts()
 	s := strings.Join(parts, " ")
 	return reMultipleSpacesSeq.ReplaceAllString(s, ", ")
 }
 
 // TokenizedParts returns a slice of all token surfaces.
-func (tokens JSONTokens) TokenizedParts() []string {
-	var parts []string
+func (tokens JSONTokens) TokenizedParts() (parts []string) {
 	for _, token := range tokens {
 		parts = append(parts, token.Surface)
 	}
-	return parts
+	return
 }
 
 // Kana returns a string of all tokens in kana form where available.
 func (tokens JSONTokens) Kana() string {
-	var parts []string
-	for _, token := range tokens {
-		if token.IsToken {
-			if token.Kana != "" {
-				parts = append(parts, token.Kana)
-			} else {
-				parts = append(parts, token.Surface)
-			}
-		} else {
-			parts = append(parts, token.Surface)
-		}
-	}
+	parts := tokens.KanaParts()
 	s := strings.Join(parts, " ")
 	return reMultipleSpacesSeq.ReplaceAllString(s, ", ")
 }
 
 // KanaParts returns a slice of all tokens in kana form where available.
-func (tokens JSONTokens) KanaParts() []string {
-	var parts []string
+func (tokens JSONTokens) KanaParts() (parts []string) {
 	for _, token := range tokens {
-		if token.IsToken {
-			if token.Kana != "" {
-				parts = append(parts, token.Kana)
-			} else {
-				parts = append(parts, token.Surface)
-			}
+		if token.IsToken && token.Kana != "" {
+			parts = append(parts, token.Kana)
 		} else {
 			parts = append(parts, token.Surface)
 		}
 	}
-	return parts
+	return
 }
 
 // Roman returns a string of all tokens in romanized form.
 func (tokens JSONTokens) Roman() string {
-	var parts []string
-	for _, token := range tokens {
-		if token.IsToken {
-			if token.Romaji != "" {
-				parts = append(parts, token.Romaji)
-			}
-		} else {
-			parts = append(parts, token.Surface)
-		}
-	}
+	parts := tokens.RomanParts()
 	s := strings.Join(parts, " ")
 	return reMultipleSpacesSeq.ReplaceAllString(s, ", ")
 }
 
 // RomanParts returns a slice of all tokens in romanized form.
-func (tokens JSONTokens) RomanParts() []string {
-	var parts []string
+func (tokens JSONTokens) RomanParts() (parts []string) {
 	for _, token := range tokens {
-		parts = append(parts, token.Romaji)
+		if token.IsToken && token.Romaji != "" {
+			parts = append(parts, token.Romaji)
+		} else {
+			parts = append(parts, token.Surface)
+		}
 	}
-	return parts
+	return
 }
 
-// GlossString returns a formatted string containing tokens and their English glosses.
-func (tokens JSONTokens) Glosses() string {
-	var parts []string
+// Gloss returns a formatted string containing tokens and their English glosses.
+func (tokens JSONTokens) Gloss() string {
+	parts := tokens.GlossParts()
+	return strings.Join(parts, " ")
+}
+
+// GlossParts returns a slice fo strings containing tokens and their English glosses.
+func (tokens JSONTokens) GlossParts() (parts []string) {
 	for _, token := range tokens {
 		if token.IsToken {
 			var glosses []string
@@ -188,7 +162,7 @@ func (tokens JSONTokens) Glosses() string {
 			parts = append(parts, token.Surface)
 		}
 	}
-	return strings.Join(parts, " ")
+	return
 }
 
 

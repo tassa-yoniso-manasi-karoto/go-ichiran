@@ -33,30 +33,41 @@ func main() {
 		panic(err)
 	}
 
-	// Analyze Japanese text
 	tokens, err := ichiran.Analyze("私は日本語を勉強しています。")
 	if err != nil {
 		panic(err)
 	}
 
-	// Print different representations
-	fmt.Println("Tokenized:", tokens.TokenizedStr())
-	fmt.Println("Kana:", tokens.Kana())
-	fmt.Println("Romaji:", tokens.Roman())
-	fmt.Println("Gloss:", tokens.GlossString())
+	fmt.Printf("Tokenized: %#v\n",		tokens.Tokenized())
+	fmt.Printf("TokenizedParts: %#v\n",	tokens.TokenizedParts())
+	fmt.Printf("Kana: %#v\n",		tokens.Kana())
+	fmt.Printf("KanaParts: %#v\n",		tokens.KanaParts())
+	fmt.Printf("Roman: %#v\n",		tokens.Roman())
+	fmt.Printf("RomanParts: %#v\n",		tokens.RomanParts())
+	fmt.Printf("Gloss: %#v\n",		tokens.Gloss())
+	fmt.Printf("GlossParts: %#v\n",		tokens.GlossParts())
 }
 ```
  
 ### Output
 
 ```
-Tokenized: 私 は 日本語 を 勉強しています . 
-Kana: わたし ‌は にほんご を べんきょう しています . 
-Romaji: watashi wa nihongo wo benkyō shiteimasu . 
-Gloss: 私(I; me) は(indicates sentence topic; indicates contrast with another option (stated or unstated); adds emphasis) 日本語(Japanese (language)) を(indicates direct object of action; indicates subject of causative expression; indicates an area traversed; indicates time (period) over which action takes place; indicates point of departure or separation of action; indicates object of desire, like, hate, etc.) . 
+Tokenized: "私 は 日本語 を 勉強しています . "
+TokenizedParts: []string{"私", "は", "日本語", "を", "勉強しています", ". "}
+Kana: "わたし は にほんご を べんきょう しています . "
+KanaParts: []string{"わたし", "は", "にほんご", "を", "べんきょう しています", ". "}
+Roman: "watashi wa nihongo wo benkyō shiteimasu . "
+RomanParts: []string{"watashi", "wa", "nihongo", "wo", "benkyō shiteimasu", ". "}
+Gloss: "私(I; me) は(indicates sentence topic; indicates contrast with another option (stated or unstated); adds emphasis) 日本語(Japanese (language)) を(indicates direct object of action; indicates subject of causative expression; indicates an area traversed; indicates time (period) over which action takes place; indicates point of departure or separation of action; indicates object of desire, like, hate, etc.) . "
+GlossParts: []string{"私(I; me)",
+	"は(indicates sentence topic; indicates contrast with another option (stated or unstated); adds emphasis)",
+	"日本語(Japanese (language))",
+	"を(indicates direct object of action; indicates subject of causative expression; indicates an area traversed; indicates time (period) over which action takes place; indicates point of departure or separation of action; indicates object of desire, like, hate, etc.)",
+	". "} 
 ```
 
-Note: if you have 'exec: "ichiran-cli": executable file not found' errors, remove directory ./docker/pgdata (as recommended by README of ichiran repo) at location below and use docker.InitForce() to bypass cache and force rebuild from scratch.
+> [!TIP]
+> if you have 'exec: "ichiran-cli": executable file not found' errors, remove directory ./docker/pgdata (as recommended by README of ichiran repo) at location below and use docker.InitForce() to bypass cache and force rebuild from scratch.
 
 ## Docker compose containers' location
 
@@ -66,8 +77,9 @@ Note: if you have 'exec: "ichiran-cli": executable file not found' errors, remov
 
 ## Requirements
 
-**Note: The Docker library in Go is not standalone - it requires a running Docker daemon. Docker Desktop (Windows/Mac) or Docker Engine (Linux) must be installed and running for this library to work.**
 
+> [!IMPORTANT]
+> **The Docker library in Go is not standalone - it requires a running Docker daemon: Docker Desktop (Windows/Mac) or Docker Engine (Linux)** must be installed and running for this library to work.**
 ### Windows
 1. **Docker Desktop for Windows**
    - Download and install from [Docker Hub](https://hub.docker.com/editions/community/docker-ce-desktop-windows)
