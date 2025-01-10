@@ -56,7 +56,7 @@ func init() {
 type Docker struct {
 	service		api.Service
 	ctx		context.Context
-	logger		*IchiranLogConsumer
+	logger		*ichiranLogConsumer
 	project		*types.Project
 	ichiranDir	string
 }
