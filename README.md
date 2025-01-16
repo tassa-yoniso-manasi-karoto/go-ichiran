@@ -81,7 +81,7 @@ GlossParts: []string{"私(I; me)",
 
 
 > [!IMPORTANT]
-> **The Docker library in Go is not standalone - it requires a running Docker daemon: Docker Desktop (Windows/Mac) or Docker Engine (Linux)** must be installed and running for this library to work.**
+> **The Docker library in Go is not standalone - it requires a running Docker daemon: Docker Desktop (Windows/Mac) or Docker Engine (Linux)** must be installed and running for this library to work.
 ### Windows
 1. **Docker Desktop for Windows**
    - Download and install from [Docker Hub](https://hub.docker.com/editions/community/docker-ce-desktop-windows)

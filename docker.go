@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 	"errors"
+	"runtime"
 
 	"github.com/go-git/go-git/v5"
 	"github.com/gookit/color"
@@ -43,6 +44,7 @@ var (
 	DockerStartTO = 300 * time.Second
 	DockerRebuildTO = 30 * time.Minute
 	errNotInitialized = errors.New("project not initialized, was Init() called?")
+	strFailedStacks = color.Red.Sprintf("Is the required dependency %s correctly installed? ", dockerBackendName()) + "failed to list stacks: %w"
 )
 
 
@@ -118,7 +120,7 @@ func (id *Docker) initialize(NoCache, Quiet bool) (err error) {
 	// Check if ichiran is already running
 	stacks, err := id.service.List(id.ctx, api.ListOptions{All: true})
 	if err != nil {
-		return fmt.Errorf("failed to list stacks: %w", err)
+		return fmt.Errorf(strFailedStacks, err)
 	}
 
 	for _, stack := range stacks {
@@ -266,7 +268,7 @@ func (id *Docker) Close() error {
 func (id *Docker) Status() (string, error) {
 	stacks, err := id.service.List(id.ctx, api.ListOptions{})
 	if err != nil {
-		return "", fmt.Errorf("failed to list stacks: %w", err)
+		return "", fmt.Errorf(strFailedStacks, err)
 	}
 
 	for _, stack := range stacks {
@@ -501,6 +503,16 @@ func std(status string) string {
 	return api.FAILED
 }
 
+func dockerBackendName() string {
+	os := strings.ToLower(runtime.GOOS)
+	
+	switch os {
+	case "darwin", "windows":
+		return "Docker Desktop"
+	default:
+		return "Docker Engine"
+	}
+}
 
 
 func placeholder3456543() {
