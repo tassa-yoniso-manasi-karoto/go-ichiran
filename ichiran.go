@@ -13,8 +13,6 @@ import (
 	"reflect"
 	"regexp"
 	"strings"
-	"time"
-	//"os"
 
 	"github.com/gookit/color"
 	"github.com/k0kubun/pp"
@@ -22,10 +20,7 @@ import (
 	"github.com/rs/zerolog/log"
 	"github.com/tidwall/pretty"
 
-	"github.com/docker/cli/cli/command"
-	"github.com/docker/cli/cli/flags"
 	"github.com/docker/docker/api/types"
-	//"github.com/docker/docker/client"
 )
 
 const (
@@ -34,7 +29,6 @@ const (
 
 var (
 	reMultipleSpacesSeq = regexp.MustCompile(`\s{2,}`)
-	QueryTO =  1 * time.Hour
 )
 
 func init() {
@@ -291,31 +285,33 @@ func (token *JSONToken) getGlosses() []string {
 
 // Analyze performs morphological analysis on the input Japanese text.
 // Returns parsed tokens or an error if analysis fails.
+// Analyze performs Japanese text analysis using ichiran
 func Analyze(text string) (*JSONTokens, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), QueryTO)
 	defer cancel()
-	
-	// Initialize Docker CLI
-	cli, err := command.NewDockerCli(
-		command.WithStandardStreams(),
-	)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create Docker CLI: %w", err)
+
+	dockerMu.Lock()
+	docker := dockerInstance
+	dockerMu.Unlock()
+
+	if docker == nil {
+		return nil, fmt.Errorf("Docker manager not initialized. Call NewDocker() first")
 	}
 
-	if err := cli.Initialize(flags.NewClientOptions()); err != nil {
-		return nil, fmt.Errorf("failed to initialize Docker CLI: %w", err)
+	// Get Docker client from dockerutil
+	client, err := docker.GetClient()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get Docker client: %w", err)
 	}
-	docker := cli.Client()
 
 	// Check container status
-	containerInfo, err := docker.ContainerInspect(ctx, ContainerName)
+	containerInfo, err := client.ContainerInspect(ctx, containerName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to inspect container: %w", err)
 	}
 
 	if !containerInfo.State.Running {
-		return nil, fmt.Errorf("container %s is not running", ContainerName)
+		return nil, fmt.Errorf("container %s is not running", containerName)
 	}
 
 	// Prepare command
@@ -336,13 +332,13 @@ func Analyze(text string) (*JSONTokens, error) {
 	}
 
 	// Create execution
-	exec, err := docker.ContainerExecCreate(ctx, ContainerName, execConfig)
+	exec, err := client.ContainerExecCreate(ctx, containerName, execConfig)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create exec: %w", err)
 	}
 
 	// Attach to execution
-	resp, err := docker.ContainerExecAttach(ctx, exec.ID, types.ExecStartCheck{})
+	resp, err := client.ContainerExecAttach(ctx, exec.ID, types.ExecStartCheck{})
 	if err != nil {
 		return nil, fmt.Errorf("failed to attach to exec: %w", err)
 	}
@@ -355,7 +351,7 @@ func Analyze(text string) (*JSONTokens, error) {
 	}
 
 	// Check execution status
-	inspect, err := docker.ContainerExecInspect(ctx, exec.ID)
+	inspect, err := client.ContainerExecInspect(ctx, exec.ID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to inspect exec: %w", err)
 	}

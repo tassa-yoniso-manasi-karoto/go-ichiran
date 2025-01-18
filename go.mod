@@ -2,6 +2,9 @@ module github.com/tassa-yoniso-manasi-karoto/go-ichiran
 
 go 1.23.2
 
+
+replace github.com/tassa-yoniso-manasi-karoto/dockerutil => /home/voiduser/go/src/dockerutil
+
 require (
 	github.com/adrg/xdg v0.5.3
 	github.com/compose-spec/compose-go/v2 v2.4.6
