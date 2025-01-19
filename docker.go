@@ -28,23 +28,23 @@ const (
 
 var (
 	QueryTO = 1 * time.Hour
-	dockerInstance *dockerutil.DockerManager
-	dockerOnce sync.Once
-	dockerMu sync.Mutex
+	instance *Docker
+	once sync.Once
+	mu sync.Mutex
 )
 
-type Ichiran struct {
+type Docker struct {
 	docker *dockerutil.DockerManager
-	logger *dockerutil.ContainerLogConsumer
+	logger  *dockerutil.ContainerLogConsumer
 }
 
-// NewDocker creates or returns an existing Docker manager instance
-func NewDocker() (*dockerutil.DockerManager, error) {
-	dockerMu.Lock()
-	defer dockerMu.Unlock()
+// NewDocker creates or returns an existing Docker instance
+func NewDocker() (*Docker, error) {
+	mu.Lock()
+	defer mu.Unlock()
 
 	var initErr error
-	dockerOnce.Do(func() {
+	once.Do(func() {
 		logConfig := dockerutil.LogConfig{
 			Prefix:      projectName,
 			ShowService: true,
@@ -63,45 +63,57 @@ func NewDocker() (*dockerutil.DockerManager, error) {
 			LogConsumer:     logger,
 		}
 
-		dockerInstance, initErr = dockerutil.NewDockerManager(cfg)
+		manager, err := dockerutil.NewDockerManager(cfg)
+		if err != nil {
+			initErr = err
+			return
+		}
+
+		instance = &Docker{
+			docker: manager,
+			logger:  logger,
+		}
 	})
 
-	return dockerInstance, initErr
+	if initErr != nil {
+		return nil, initErr
+	}
+	return instance, nil
 }
 
 // Init initializes the ichiran service
-func (i *Ichiran) Init() error {
+func (i *Docker) Init() error {
 	return i.docker.Init()
 }
 
 // InitQuiet initializes the ichiran service with reduced logging
-func (i *Ichiran) InitQuiet() error {
+func (i *Docker) InitQuiet() error {
 	return i.docker.InitQuiet()
 }
 
 // InitForce initializes the ichiran service with forced rebuild
-func (i *Ichiran) InitForce() error {
+func (i *Docker) InitForce() error {
 	return i.docker.InitForce()
 }
 
 // Stop stops the ichiran service
-func (i *Ichiran) Stop() error {
+func (i *Docker) Stop() error {
 	return i.docker.Stop()
 }
 
 // Close implements io.Closer
-func (i *Ichiran) Close() error {
+func (i *Docker) Close() error {
 	i.logger.Close()
 	return i.docker.Close()
 }
 
 // Status returns the current status of the ichiran service
-func (i *Ichiran) Status() (string, error) {
+func (i *Docker) Status() (string, error) {
 	return i.docker.Status()
 }
 
 // SetLogLevel updates the logging level
-func (i *Ichiran) SetLogLevel(level zerolog.Level) {
+func (i *Docker) SetLogLevel(level zerolog.Level) {
 	i.logger.SetLogLevel(level)
 }
 

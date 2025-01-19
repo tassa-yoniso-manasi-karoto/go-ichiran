@@ -290,16 +290,16 @@ func Analyze(text string) (*JSONTokens, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), QueryTO)
 	defer cancel()
 
-	dockerMu.Lock()
-	docker := dockerInstance
-	dockerMu.Unlock()
+	mu.Lock()
+	docker := instance
+	mu.Unlock()
 
 	if docker == nil {
 		return nil, fmt.Errorf("Docker manager not initialized. Call NewDocker() first")
 	}
 
 	// Get Docker client from dockerutil
-	client, err := docker.GetClient()
+	client, err := docker.docker.GetClient()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get Docker client: %w", err)
 	}
