@@ -185,7 +185,12 @@ func isRegularReading(reading *KanjiReading) bool {
 // Returns:
 //   - A TransliterationResult containing both the final text and detailed processing information
 //   - An error if the processing fails
-func (tokens JSONTokens) SelectiveTranslit(freqThreshold int) (*TransliterationResult, error) {
+func (tokens JSONTokens) SelectiveTranslit(freqThreshold int) (string, error) {
+	tlitStruct, err := tokens.selectiveTranslit(freqThreshold)
+	return tlitStruct.Text, err
+}
+
+func (tokens JSONTokens) selectiveTranslit(freqThreshold int) (*TransliterationResult, error) {
 	// Reconstruct the original text from the tokens
 	var originalText strings.Builder
 	for _, t := range tokens {
