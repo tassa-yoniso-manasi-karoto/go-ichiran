@@ -21,17 +21,9 @@ go get github.com/tassa-yoniso-manasi-karoto/go-ichiran
 
 ```go
 func main() {
-	// Initialize Docker client with default configuration
-	docker, err := ichiran.NewDocker()
-	if err != nil {
-		panic(err)
-	}
-	defer docker.Close()
-
 	// Initialize the environment (downloads, builds and starts containers if they are not running)
-	if err := docker.Init(); err != nil {
-		panic(err)
-	}
+	ichiran.MustInit()
+	defer ichiran.Close()
 
 	tokens, err := ichiran.Analyze("私は日本語を勉強しています。")
 	if err != nil {

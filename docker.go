@@ -2,6 +2,7 @@
 package ichiran
 
 import (
+	"fmt"
 	"time"
 	"sync"
 
@@ -82,45 +83,78 @@ func NewDocker() (*Docker, error) {
 }
 
 // Init initializes the ichiran service
-func (i *Docker) Init() error {
-	return i.docker.Init()
+func Init() error {
+	if instance == nil {
+		if _, err := NewDocker(); err != nil {
+			return err
+		}
+	}
+	return instance.docker.Init()
 }
 
 // InitQuiet initializes the ichiran service with reduced logging
-func (i *Docker) InitQuiet() error {
-	return i.docker.InitQuiet()
+func InitQuiet() error {
+	if instance == nil {
+		if _, err := NewDocker(); err != nil {
+			return err
+		}
+	}
+	return instance.docker.InitQuiet()
 }
 
 // InitForce initializes the ichiran service with forced rebuild
-func (i *Docker) InitForce() error {
-	return i.docker.InitForce()
+func InitForce() error {
+	if instance == nil {
+		if _, err := NewDocker(); err != nil {
+			return err
+		}
+	}
+	return instance.docker.InitForce()
+}
+
+// Same as InitForce but will throw a runtime panic if an error is an error occur.
+func MustInit() {
+	if instance == nil {
+		NewDocker()
+	}
+	instance.docker.InitForce()
 }
 
 // Stop stops the ichiran service
-func (i *Docker) Stop() error {
-	return i.docker.Stop()
+func Stop() error {
+	if instance == nil {
+		return fmt.Errorf("docker instance not initialized")
+	}
+	return instance.docker.Stop()
 }
 
 // Close implements io.Closer
-func (i *Docker) Close() error {
-	i.logger.Close()
-	return i.docker.Close()
+func Close() error {
+	if instance != nil {
+		instance.logger.Close()
+		return instance.docker.Close()
+	}
+	return nil
 }
 
-// Status returns the current status of the ichiran service
-func (i *Docker) Status() (string, error) {
-	return i.docker.Status()
+func Status() (string, error) {
+	if instance == nil {
+		return "", fmt.Errorf("docker instance not initialized")
+	}
+	return instance.docker.Status()
 }
 
-// SetLogLevel updates the logging level
-func (i *Docker) SetLogLevel(level zerolog.Level) {
-	i.logger.SetLogLevel(level)
+func SetLogLevel(level zerolog.Level) {
+	if instance != nil {
+		instance.logger.SetLogLevel(level)
+	}
 }
 
 
 
 
 func placeholder3456543() {
+	fmt.Print("")
 	color.Redln(" 𝒻*** 𝓎ℴ𝓊 𝒸ℴ𝓂𝓅𝒾𝓁ℯ𝓇")
 	pp.Println("𝓯*** 𝔂𝓸𝓾 𝓬𝓸𝓶𝓹𝓲𝓵𝓮𝓻")
 }
