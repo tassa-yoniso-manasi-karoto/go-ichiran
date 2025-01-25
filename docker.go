@@ -128,7 +128,7 @@ func Stop() error {
 	return instance.docker.Stop()
 }
 
-// Close implements io.Closer
+// Close implements io.Closer. It is just a convenience wrapper for Stop().
 func Close() error {
 	if instance != nil {
 		instance.logger.Close()
