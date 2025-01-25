@@ -295,7 +295,7 @@ func Analyze(text string) (*JSONTokens, error) {
 	mu.Unlock()
 
 	if docker == nil {
-		return nil, fmt.Errorf("Docker manager not initialized. Call NewDocker() first")
+		return nil, fmt.Errorf("Docker manager not initialized. Call Init() first")
 	}
 
 	// Get Docker client from dockerutil

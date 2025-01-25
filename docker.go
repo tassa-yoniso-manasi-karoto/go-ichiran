@@ -29,18 +29,18 @@ const (
 
 var (
 	QueryTO = 1 * time.Hour
-	instance *Docker
+	instance *docker
 	once sync.Once
 	mu sync.Mutex
 )
 
-type Docker struct {
+type docker struct {
 	docker *dockerutil.DockerManager
 	logger  *dockerutil.ContainerLogConsumer
 }
 
-// NewDocker creates or returns an existing Docker instance
-func NewDocker() (*Docker, error) {
+// NewDocker creates or returns an existing docker instance
+func newDocker() (*docker, error) {
 	mu.Lock()
 	defer mu.Unlock()
 
@@ -70,7 +70,7 @@ func NewDocker() (*Docker, error) {
 			return
 		}
 
-		instance = &Docker{
+		instance = &docker{
 			docker: manager,
 			logger:  logger,
 		}
@@ -85,7 +85,7 @@ func NewDocker() (*Docker, error) {
 // Init initializes the ichiran service
 func Init() error {
 	if instance == nil {
-		if _, err := NewDocker(); err != nil {
+		if _, err := newDocker(); err != nil {
 			return err
 		}
 	}
@@ -95,7 +95,7 @@ func Init() error {
 // InitQuiet initializes the ichiran service with reduced logging
 func InitQuiet() error {
 	if instance == nil {
-		if _, err := NewDocker(); err != nil {
+		if _, err := newDocker(); err != nil {
 			return err
 		}
 	}
@@ -105,7 +105,7 @@ func InitQuiet() error {
 // InitForce initializes the ichiran service with forced rebuild
 func InitForce() error {
 	if instance == nil {
-		if _, err := NewDocker(); err != nil {
+		if _, err := newDocker(); err != nil {
 			return err
 		}
 	}
@@ -115,7 +115,7 @@ func InitForce() error {
 // Same as InitForce but will throw a runtime panic if an error is an error occur.
 func MustInit() {
 	if instance == nil {
-		NewDocker()
+		newDocker()
 	}
 	instance.docker.InitForce()
 }
