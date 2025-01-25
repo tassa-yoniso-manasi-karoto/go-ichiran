@@ -1,21 +1,21 @@
 module github.com/tassa-yoniso-manasi-karoto/go-ichiran
 
-go 1.23.2
-
+go 1.23.4
 
 replace github.com/tassa-yoniso-manasi-karoto/dockerutil => /home/voiduser/go/src/dockerutil
 
 require (
 	github.com/adrg/xdg v0.5.3
-	github.com/compose-spec/compose-go/v2 v2.4.6
-	github.com/docker/cli v27.4.0+incompatible
-	github.com/docker/compose/v2 v2.32.1
-	github.com/docker/docker v27.4.0+incompatible
+	github.com/compose-spec/compose-go/v2 v2.4.7
+	github.com/docker/cli v27.5.0+incompatible
+	github.com/docker/compose/v2 v2.32.4
+	github.com/docker/docker v27.5.0+incompatible
 	github.com/go-git/go-git/v5 v5.12.0
 	github.com/gookit/color v1.5.4
 	github.com/k0kubun/pp v3.0.1+incompatible
 	github.com/rs/zerolog v1.33.0
 	github.com/stretchr/testify v1.10.0
+	github.com/tassa-yoniso-manasi-karoto/dockerutil v0.0.0-20250125053402-0ba60f8e6ba7
 	github.com/tidwall/pretty v1.2.1
 )
 
@@ -185,7 +185,7 @@ require (
 	go.uber.org/mock v0.5.0 // indirect
 	golang.org/x/crypto v0.31.0 // indirect
 	golang.org/x/exp v0.0.0-20240909161429-701f63a606c0 // indirect
-	golang.org/x/net v0.30.0 // indirect
+	golang.org/x/net v0.33.0 // indirect
 	golang.org/x/oauth2 v0.23.0 // indirect
 	golang.org/x/sync v0.10.0 // indirect
 	golang.org/x/sys v0.28.0 // indirect

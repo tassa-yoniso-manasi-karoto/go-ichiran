@@ -101,6 +101,7 @@ func getKanjiReadings(text string) ([]kanjiReadingResult, error) {
 		return nil, fmt.Errorf("failed to read exec output: %w", err)
 	}
 	
+	
 	// First unescape the JSON string
 	var jsonStr string
 	if err := json.Unmarshal(output, &jsonStr); err != nil {
@@ -112,6 +113,7 @@ func getKanjiReadings(text string) ([]kanjiReadingResult, error) {
 	if err := json.Unmarshal([]byte(jsonStr), &results); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal kanji readings: %w\nJSON: %s", err, jsonStr)
 	}
+	//color.Redf("len(output)=%d\tjsonStr=\"%s\"\n", len(output), jsonStr)
 
 	// Process the results to handle Unicode escapes
 	for i := range results {
@@ -172,21 +174,26 @@ func isRegularReading(reading *KanjiReading) bool {
 	return reading.Link && reading.Geminated == ""
 }
 
-// SelectiveTranslit performs selective transliteration of Japanese text based on kanji frequency.
+// SelectiveTranslit performs selective transliteration of the tokens based on kanji frequency.
 // It preserves kanji that are both:
 //   - Below the specified frequency threshold (lower number = more frequent)
 //   - Have regular readings (no special phonetic modifications)
 // Other kanji are converted to their hiragana readings.
 //
-// Parameters:
-//   - text: The input Japanese text to process
-//   - freqThreshold: Maximum frequency rank to preserve (1-3000, lower = more frequent)
+// Parameter freqThreshold: Maximum frequency rank to preserve (1-3000, lower = more frequent)
 //
 // Returns:
 //   - A TransliterationResult containing both the final text and detailed processing information
 //   - An error if the processing fails
-func SelectiveTranslit(text string, freqThreshold int) (*TransliterationResult, error) {
-	readings, err := getKanjiReadings(text)
+func (tokens JSONTokens) SelectiveTranslit(freqThreshold int) (*TransliterationResult, error) {
+	// Reconstruct the original text from the tokens
+	var originalText strings.Builder
+	for _, t := range tokens {
+		originalText.WriteString(t.Surface)
+	}
+
+	// Get kanji readings for the complete text
+	readings, err := getKanjiReadings(originalText.String())
 	if err != nil {
 		return nil, fmt.Errorf("failed to get kanji readings: %w", err)
 	}
