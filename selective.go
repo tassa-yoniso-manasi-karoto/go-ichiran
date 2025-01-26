@@ -341,30 +341,30 @@ func splitIntoChunks(text string) []struct {
 }
 
 
-// String provides human-readable status descriptions
-func (s ProcessingStatus) String() string {
-	return map[ProcessingStatus]string{
-		StatusPreserved:  "Preserved (regular reading & frequent)",
-		StatusIrregular:  "Transliterated (irregular reading)",
-		StatusInfrequent: "Transliterated (infrequent)",
-		StatusUnmappable: "Transliterated (unmappable)",
-		StatusNotKanji:   "Preserved (not kanji)",
-	}[s]
-}
+// // String provides human-readable status descriptions
+// func (s ProcessingStatus) String() string {
+// 	return map[ProcessingStatus]string{
+// 		StatusPreserved:  "Preserved (regular reading & frequent)",
+// 		StatusIrregular:  "Transliterated (irregular reading)",
+// 		StatusInfrequent: "Transliterated (infrequent)",
+// 		StatusUnmappable: "Transliterated (unmappable)",
+// 		StatusNotKanji:   "Preserved (not kanji)",
+// 	}[s]
+// }
 
 
-// Helper function to print detailed processing information
-func PrintProcessingDetails(result *TransliterationResult) {
-	fmt.Printf("Final text:\t\t%s\n\n", result.Text)
-	fmt.Println("Processing details:")
-	fmt.Println("------------------")
-	for _, token := range result.Tokens {
-		fmt.Printf("Original: %s\n", token.Original)
-		fmt.Printf("Result:   %s\n", token.Result)
-		fmt.Printf("Status:   %s\n", token.Status)
-		fmt.Println("------------------")
-	}
-}
+// // Helper function to print detailed processing information
+// func printProcessingDetails(result *TransliterationResult) {
+// 	fmt.Printf("Final text:\t\t%s\n\n", result.Text)
+// 	fmt.Println("Processing details:")
+// 	fmt.Println("------------------")
+// 	for _, token := range result.Tokens {
+// 		fmt.Printf("Original: %s\n", token.Original)
+// 		fmt.Printf("Result:   %s\n", token.Result)
+// 		fmt.Printf("Status:   %s\n", token.Status)
+// 		fmt.Println("------------------")
+// 	}
+// }
 
 
 
