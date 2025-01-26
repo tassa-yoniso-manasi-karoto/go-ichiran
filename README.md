@@ -4,12 +4,13 @@ A Go library for Japanese text analysis using the [Ichiran](https://github.com/t
 
 ## Features
 
--  Morphological analysis of Japanese text
--  Kanji readings and translations
--  Romaji (romanization) support
+-  **Morphological analysis** of Japanese text
+-  **Kanji readings** and translations
+-  **Romaji** (romanization) support
+-  🆕 **Selective transliteration**: performs selective transliteration of text based on kanji frequency and phonetic regularity. Kanji with a frequency rank below the specified frequency threshold and regular readings are preserved, while others are converted to hiragana.
 -  Part-of-speech tagging
 -  Conjugation analysis
--  Download & manage the docker containers directly using the Docker Compose Go API
+-  **Download & manage the docker containers automatically using the Docker Compose Go API** 🚀
 
 ## Installation
 
@@ -29,11 +30,16 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
+	tlit, err := tokens.SelectiveTranslit(1000) // most frequent 1000 Kanjis only
+	if err != nil {
+		panic(err)
+	}
 
 	fmt.Printf("Tokenized: %#v\n",		tokens.Tokenized())
 	fmt.Printf("TokenizedParts: %#v\n",	tokens.TokenizedParts())
 	fmt.Printf("Kana: %#v\n",		tokens.Kana())
 	fmt.Printf("KanaParts: %#v\n",		tokens.KanaParts())
+	fmt.Printf("SelectiveTranslit: %#v\n",	tlit)
 	fmt.Printf("Roman: %#v\n",		tokens.Roman())
 	fmt.Printf("RomanParts: %#v\n",		tokens.RomanParts())
 	fmt.Printf("GlossParts: %#v\n",		tokens.GlossParts())
@@ -47,6 +53,7 @@ Tokenized: "私 は 日本語 を 勉強しています . "
 TokenizedParts: []string{"私", "は", "日本語", "を", "勉強しています", ". "}
 Kana: "わたし は にほんご を べんきょう しています . "
 KanaParts: []string{"わたし", "は", "にほんご", "を", "べんきょう しています", ". "}
+SelectiveTranslit: "私は日本語を べんきょう しています. "
 Roman: "watashi wa nihongo wo benkyō shiteimasu . "
 RomanParts: []string{"watashi", "wa", "nihongo", "wo", "benkyō shiteimasu", ". "}
 GlossParts: []string{"私(I; me)",
