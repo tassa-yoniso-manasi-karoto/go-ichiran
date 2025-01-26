@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 	"slices"
+	"unicode"
 
 	"github.com/gookit/color"
 	"github.com/k0kubun/pp"
@@ -196,64 +197,147 @@ func (tokens JSONTokens) selectiveTranslit(freqThreshold int) (*TransliterationR
 	for _, t := range tokens {
 		originalText.WriteString(t.Surface)
 	}
+	text := originalText.String()
 
-	// Get kanji readings for the complete text
-	readings, err := getKanjiReadings(originalText.String())
-	if err != nil {
-		return nil, fmt.Errorf("failed to get kanji readings: %w", err)
-	}
+	// Split text into processable and non-processable chunks
+	chunks := splitIntoChunks(text)
 
-	var result strings.Builder
-	var processedTokens []ProcessedToken
+	var allProcessedTokens []ProcessedToken
+	var finalResult strings.Builder
 
-	for _, r := range readings {
-		if r.KanjiReading != nil {
-			kanji := r.KanjiReading.Kanji
-			freq := slices.Index(kanjiFreqSlice, kanji)
-			exists := freq != -1
-			
-			var token ProcessedToken
-			token.Original = kanji
-
-			// Determine if we should preserve or transliterate the kanji
-			shouldPreserve := exists && 
-				freq <= freqThreshold && 
-				isRegularReading(r.KanjiReading)
-
-			if shouldPreserve {
-				token.Result = kanji
-				token.Status = StatusPreserved
-			} else {
-				token.Result = r.KanjiReading.Reading
-				
-				// Determine specific reason for transliteration
-				if !exists || freq > freqThreshold {
-					token.Status = StatusInfrequent
-				} else if !isRegularReading(r.KanjiReading) {
-					token.Status = StatusIrregular
-				} else {
-					token.Status = StatusUnmappable
-				}
-			}
-
-			result.WriteString(token.Result)
-			processedTokens = append(processedTokens, token)
-
-		} else if r.TextSegment != nil {
+	// Process each chunk
+	for _, chunk := range chunks {
+		if !chunk.processable {
+			// Preserve non-processable chunks as-is
 			token := ProcessedToken{
-				Original: r.TextSegment.Text,
-				Result:   r.TextSegment.Text,
+				Original: chunk.text,
+				Result:   chunk.text,
 				Status:   StatusNotKanji,
 			}
-			result.WriteString(token.Result)
-			processedTokens = append(processedTokens, token)
+			finalResult.WriteString(chunk.text)
+			allProcessedTokens = append(allProcessedTokens, token)
+			continue
+		}
+
+		// Process Japanese text chunks
+		readings, err := getKanjiReadings(chunk.text)
+		if err != nil {
+			// If processing fails, preserve the chunk as-is
+			token := ProcessedToken{
+				Original: chunk.text,
+				Result:   chunk.text,
+				Status:   StatusNotKanji,
+			}
+			finalResult.WriteString(chunk.text)
+			allProcessedTokens = append(allProcessedTokens, token)
+			continue
+		}
+
+		// Process the readings
+		for _, r := range readings {
+			if r.KanjiReading != nil {
+				kanji := r.KanjiReading.Kanji
+				freq := slices.Index(kanjiFreqSlice, kanji)
+				exists := freq != -1
+
+				var token ProcessedToken
+				token.Original = kanji
+
+				shouldPreserve := exists &&
+					freq <= freqThreshold &&
+					isRegularReading(r.KanjiReading)
+
+				if shouldPreserve {
+					token.Result = kanji
+					token.Status = StatusPreserved
+				} else {
+					token.Result = r.KanjiReading.Reading
+					if !exists || freq > freqThreshold {
+						token.Status = StatusInfrequent
+					} else if !isRegularReading(r.KanjiReading) {
+						token.Status = StatusIrregular
+					} else {
+						token.Status = StatusUnmappable
+					}
+				}
+
+				finalResult.WriteString(token.Result)
+				allProcessedTokens = append(allProcessedTokens, token)
+
+			} else if r.TextSegment != nil {
+				token := ProcessedToken{
+					Original: r.TextSegment.Text,
+					Result:   r.TextSegment.Text,
+					Status:   StatusNotKanji,
+				}
+				finalResult.WriteString(token.Result)
+				allProcessedTokens = append(allProcessedTokens, token)
+			}
 		}
 	}
 
 	return &TransliterationResult{
-		Text:    result.String(),
-		Tokens:  processedTokens,
+		Text:   finalResult.String(),
+		Tokens: allProcessedTokens,
 	}, nil
+}
+
+// splitIntoChunks splits text into alternating chunks of processable (Japanese) and
+// non-processable (punctuation, etc.) text, preserving their order
+func splitIntoChunks(text string) []struct {
+	text        string
+	processable bool
+} {
+	var chunks []struct {
+		text        string
+		processable bool
+	}
+	var currentJapanese strings.Builder
+	var currentOther strings.Builder
+
+	flushJapanese := func() {
+		if currentJapanese.Len() > 0 {
+			chunks = append(chunks, struct {
+				text        string
+				processable bool
+			}{
+				text:        currentJapanese.String(),
+				processable: true,
+			})
+			currentJapanese.Reset()
+		}
+	}
+
+	flushOther := func() {
+		if currentOther.Len() > 0 {
+			chunks = append(chunks, struct {
+				text        string
+				processable bool
+			}{
+				text:        currentOther.String(),
+				processable: false,
+			})
+			currentOther.Reset()
+		}
+	}
+
+	for _, r := range text {
+		if unicode.Is(unicode.Han, r) || // Kanji
+			unicode.Is(unicode.Hiragana, r) ||
+			unicode.Is(unicode.Katakana, r) {
+			flushOther()
+			currentJapanese.WriteRune(r)
+		} else {
+			flushJapanese()
+			currentOther.WriteRune(r)
+		}
+	}
+
+	// Flush any remaining content
+	flushJapanese()
+	flushOther()
+
+	return chunks
 }
 
 
