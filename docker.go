@@ -82,7 +82,7 @@ func newDocker() (*docker, error) {
 	return instance, nil
 }
 
-// Init initializes the ichiran service
+// Init initializes the docker service
 func Init() error {
 	if instance == nil {
 		if _, err := newDocker(); err != nil {
@@ -92,7 +92,7 @@ func Init() error {
 	return instance.docker.Init()
 }
 
-// InitQuiet initializes the ichiran service with reduced logging
+// InitQuiet initializes the docker service with reduced logging
 func InitQuiet() error {
 	if instance == nil {
 		if _, err := newDocker(); err != nil {
@@ -102,22 +102,25 @@ func InitQuiet() error {
 	return instance.docker.InitQuiet()
 }
 
-// InitForce initializes the ichiran service with forced rebuild
-func InitForce() error {
+// InitRecreate remove existing containers (if noCache is true, downloads the lastest
+// version of dependencies ignoring cache), then builds and up the containers
+func InitRecreate(noCache bool) error {
 	if instance == nil {
 		if _, err := newDocker(); err != nil {
 			return err
 		}
 	}
-	return instance.docker.InitForce()
+	if noCache {
+		return instance.docker.InitRecreateNoCache()
+	}
+	return instance.docker.InitRecreate()
 }
 
-// Same as InitForce but will throw a runtime panic if an error is an error occur.
 func MustInit() {
 	if instance == nil {
 		newDocker()
 	}
-	instance.docker.InitForce()
+	instance.docker.InitRecreate()
 }
 
 // Stop stops the ichiran service
