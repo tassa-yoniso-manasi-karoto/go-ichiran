@@ -52,7 +52,7 @@ func getKanjiReadings(text string) ([]kanjiReadingResult, error) {
 	// Get the kana reading
 	kanaReading := tokens.Kana()
 
-	ctx, cancel := context.WithTimeout(context.Background(), QueryTO)
+	ctx, cancel := context.WithTimeout(Ctx, QueryTimeout)
 	defer cancel()
 
 	mu.Lock()

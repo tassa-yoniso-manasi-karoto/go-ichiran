@@ -35,6 +35,7 @@ var (
 	once sync.Once
 	mu sync.Mutex
 	Ctx = context.TODO()
+	QueryTimeout = 45 * time.Minute
 )
 
 type docker struct {

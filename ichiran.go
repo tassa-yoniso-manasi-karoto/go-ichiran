@@ -286,7 +286,7 @@ func (token *JSONToken) getGlosses() []string {
 // Returns parsed tokens or an error if analysis fails.
 // Analyze performs Japanese text analysis using ichiran
 func Analyze(text string) (*JSONTokens, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), QueryTO)
+	ctx, cancel := context.WithTimeout(Ctx, QueryTimeout)
 	defer cancel()
 
 	mu.Lock()
