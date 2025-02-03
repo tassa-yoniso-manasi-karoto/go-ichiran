@@ -182,10 +182,6 @@ func isRegularReading(reading *KanjiReading) bool {
 // Other kanji are converted to their hiragana readings.
 //
 // Parameter freqThreshold: Maximum frequency rank to preserve (1-3000, lower = more frequent)
-//
-// Returns:
-//   - A TransliterationResult containing both the final text and detailed processing information
-//   - An error if the processing fails
 func (tokens JSONTokens) SelectiveTranslit(freqThreshold int) (string, error) {
 	tlitStruct, err := tokens.selectiveTranslit(freqThreshold)
 	return tlitStruct.Text, err

@@ -103,7 +103,7 @@ func InitQuiet() error {
 }
 
 // InitRecreate remove existing containers (if noCache is true, downloads the lastest
-// version of dependencies ignoring cache), then builds and up the containers
+// version of dependencies ignoring local cache), then builds and up the containers
 func InitRecreate(noCache bool) error {
 	if instance == nil {
 		if _, err := newDocker(); err != nil {
