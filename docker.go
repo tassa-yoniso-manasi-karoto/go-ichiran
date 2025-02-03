@@ -67,7 +67,7 @@ func newDocker() (*docker, error) {
 			RequiredServices: []string{"main", "pg"},
 			LogConsumer:      logger,
 			Timeout:	  dockerutil.Timeout{
-				Create:		60 * time.Second,
+				Create:		200 * time.Second,
 				Recreate:	25 * time.Minute,
 				Start:		60 * time.Second,
 			},
