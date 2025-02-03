@@ -27,7 +27,7 @@ const (
 	remote = "https://github.com/tshatrov/ichiran.git"
 	projectName = "ichiran"
 	containerName = "ichiran-main-1"
-	LogLevel = zerolog.TraceLevel // FIXME still broken idk why
+	DockerLogLevel = zerolog.TraceLevel
 )
 
 var (
@@ -54,7 +54,7 @@ func newDocker() (*docker, error) {
 			Prefix:      projectName,
 			ShowService: true,
 			ShowType:    true,
-			LogLevel:    LogLevel,
+			LogLevel:    DockerLogLevel,
 			InitMessage: "All set, awaiting commands",
 		}
 		

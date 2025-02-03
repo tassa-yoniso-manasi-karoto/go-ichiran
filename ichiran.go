@@ -17,7 +17,6 @@ import (
 	"github.com/gookit/color"
 	"github.com/k0kubun/pp"
 	"github.com/rs/zerolog"
-	"github.com/rs/zerolog/log"
 	"github.com/tidwall/pretty"
 	"github.com/docker/docker/api/types"
 )
@@ -28,14 +27,10 @@ const (
 
 var (
 	reMultipleSpacesSeq = regexp.MustCompile(`\s{2,}`)
+	Logger = zerolog.Nop()
+	// Logger = zerolog.New(zerolog.ConsoleWriter{Out: os.Stderr, TimeFormat: time.TimeOnly}).With().Timestamp().Logger()
 )
 
-func init() {
-	zerolog.SetGlobalLevel(zerolog.TraceLevel)
-	pp.BufferFoldThreshold = 10000
-	//log.Logger = zerolog.New(zerolog.ConsoleWriter{Out: os.Stderr, TimeFormat: time.TimeOnly}).With().Timestamp().Logger()
-	log.Logger = zerolog.Nop()
-}
 
 // JSONToken represents a single token with all its analysis information
 type JSONToken struct {
@@ -422,20 +417,20 @@ func extractTokens(group []interface{}) []JSONToken {
 	var tokens []JSONToken
 
 	if len(group) < 1 {
-		log.Error().Msgf("group too short: %v", group)
+		Logger.Error().Msgf("group too short: %v", group)
 		return tokens
 	}
 
 	layer, ok := group[0].([]interface{})
 	if !ok {
-		log.Error().Msgf("failed to assert layer: expected []interface{}, got %s with value: %#v",
+		Logger.Error().Msgf("failed to assert layer: expected []interface{}, got %s with value: %#v",
 			reflect.TypeOf(group[0]), group[0])
 		return tokens
 	}
 
 	tokenGroups, ok := layer[0].([]interface{})
 	if !ok {
-		log.Error().Msgf("failed to assert tokenGroups: expected []interface{}, got %s with value: %#v",
+		Logger.Error().Msgf("failed to assert tokenGroups: expected []interface{}, got %s with value: %#v",
 			reflect.TypeOf(group[0]), group[0])
 		return tokens
 	}
@@ -449,13 +444,13 @@ func extractTokens(group []interface{}) []JSONToken {
 
 		tokenEntry, ok := tokenGroup.([]interface{})
 		if !ok {
-			log.Error().Msgf("failed to assert tokenEntry: expected []interface{}, got %s with value: %#v",
+			Logger.Error().Msgf("failed to assert tokenEntry: expected []interface{}, got %s with value: %#v",
 				reflect.TypeOf(tokenGroup), tokenGroup)
 			continue
 		}
 
 		if len(tokenEntry) < 3 {
-			log.Error().Msgf("tokenEntry too short: %#v", tokenEntry)
+			Logger.Error().Msgf("tokenEntry too short: %#v", tokenEntry)
 			continue
 		}
 
@@ -463,7 +458,7 @@ func extractTokens(group []interface{}) []JSONToken {
 		romaji, ok := tokenEntry[0].(string)
 		if !ok {
 			pp.Println(tokenEntry[0])
-			log.Error().Msgf("failed to assert romaji: expected string, got %s with value: %#v",
+			Logger.Error().Msgf("failed to assert romaji: expected string, got %s with value: %#v",
 				reflect.TypeOf(tokenEntry[0]), tokenEntry[0])
 			continue
 		}
@@ -471,7 +466,7 @@ func extractTokens(group []interface{}) []JSONToken {
 		// Second element can be either direct token data or an object with alternatives
 		data, ok := tokenEntry[1].(map[string]interface{})
 		if !ok {
-			log.Error().Msgf("failed to assert token map: expected map[string]interface{}, got %s with value: %#v",
+			Logger.Error().Msgf("failed to assert token map: expected map[string]interface{}, got %s with value: %#v",
 				reflect.TypeOf(tokenEntry[1]), tokenEntry[1])
 			continue
 		}
@@ -482,7 +477,7 @@ func extractTokens(group []interface{}) []JSONToken {
 		if altInterface, hasAlt := data["alternative"]; hasAlt {
 			altArray, ok := altInterface.([]interface{})
 			if !ok {
-				log.Error().Msgf("failed to assert alternative array: got %T", altInterface)
+				Logger.Error().Msgf("failed to assert alternative array: got %T", altInterface)
 				continue
 			}
 
@@ -491,19 +486,19 @@ func extractTokens(group []interface{}) []JSONToken {
 			for _, alt := range altArray {
 				altBytes, err := json.Marshal(alt)
 				if err != nil {
-					log.Error().Err(err).Msg("failed to marshal alternative")
+					Logger.Error().Err(err).Msg("failed to marshal alternative")
 					continue
 				}
 
 				var altToken JSONToken
 				if err := json.Unmarshal(altBytes, &altToken); err != nil {
 					// ERR failed to unmarshal alternative error="json: cannot unmarshal array into Go struct field Conj.conj.readok of type bool"
-					log.Error().Str("altBytes", string(pretty.Pretty(altBytes))).Err(err).Msg("failed to unmarshal alternative")
+					Logger.Error().Str("altBytes", string(pretty.Pretty(altBytes))).Err(err).Msg("failed to unmarshal alternative")
 					continue
 				}
 
 				if err := decodeToken(&altToken); err != nil {
-					log.Error().Err(err).Msg("failed to decode alternative token")
+					Logger.Error().Err(err).Msg("failed to decode alternative token")
 					continue
 				}
 
@@ -527,18 +522,18 @@ func extractTokens(group []interface{}) []JSONToken {
 			// Direct token data
 			tokenBytes, err := json.Marshal(data)
 			if err != nil {
-				log.Error().Err(err).Msgf("failed to marshal token data of type %s: %#v",
+				Logger.Error().Err(err).Msgf("failed to marshal token data of type %s: %#v",
 					reflect.TypeOf(data), data)
 				continue
 			}
 
 			if err := json.Unmarshal(tokenBytes, &token); err != nil {
-				log.Error().Err(err).Msgf("failed to unmarshal token data: %s", string(tokenBytes))
+				Logger.Error().Err(err).Msgf("failed to unmarshal token data: %s", string(tokenBytes))
 				continue
 			}
 
 			if err := decodeToken(&token); err != nil {
-				log.Error().Err(err).Msgf("failed to decode token: %#v", token)
+				Logger.Error().Err(err).Msgf("failed to decode token: %#v", token)
 				continue
 			}
 		}
@@ -558,13 +553,13 @@ func parseOutput(output []byte) (JSONTokens, error) {
 	decoder.UseNumber()
 	if err := decoder.Decode(&rawResult); err != nil {
 		println(stringCapLen(string(output), 1000))
-		log.Fatal().Err(err).Msg("failed to decode JSON")
+		Logger.Fatal().Err(err).Msg("failed to decode JSON")
 		return nil, fmt.Errorf("failed to decode JSON: %w", err)
 	}
 
-	//log.Debug().Msgf("Raw result structure type: %s", reflect.TypeOf(rawResult))
+	//Logger.Debug().Msgf("Raw result structure type: %s", reflect.TypeOf(rawResult))
 	/*for i, item := range rawResult {
-		log.Trace().Msgf("Item %d type: %s, value: %#v", i, reflect.TypeOf(item), item)
+		Logger.Trace().Msgf("Item %d type: %s, value: %#v", i, reflect.TypeOf(item), item)
 	}*/
 
 	var tokens JSONTokens
@@ -588,11 +583,11 @@ func parseOutput(output []byte) (JSONTokens, error) {
 					tokens = append(tokens, &t)
 				}
 			} else {
-				log.Error().Msgf("No tokens extracted from type %s: %#v",
+				Logger.Error().Msgf("No tokens extracted from type %s: %#v",
 					reflect.TypeOf(v), v)
 			}
 		default:
-			log.Debug().Msgf("Unexpected type in rawResult: %s value: %#v",
+			Logger.Debug().Msgf("Unexpected type in rawResult: %s value: %#v",
 				reflect.TypeOf(item), item)
 		}
 	}
@@ -604,15 +599,15 @@ func parseOutput(output []byte) (JSONTokens, error) {
 func decodeToken(token *JSONToken) error {
 	var err error
 	if token.Surface, err = unescapeUnicodeString(token.Surface); err != nil {
-		log.Debug().Err(err).Msgf("failed to decode Surface: %s", token.Surface)
+		Logger.Debug().Err(err).Msgf("failed to decode Surface: %s", token.Surface)
 		return fmt.Errorf("failed to decode Surface: %w", err)
 	}
 	if token.Reading, err = unescapeUnicodeString(token.Reading); err != nil {
-		log.Debug().Err(err).Msgf("failed to decode Reading: %s", token.Reading)
+		Logger.Debug().Err(err).Msgf("failed to decode Reading: %s", token.Reading)
 		return fmt.Errorf("failed to decode Reading: %w", err)
 	}
 	if token.Kana, err = unescapeUnicodeString(token.Kana); err != nil {
-		log.Debug().Err(err).Msgf("failed to decode Kana: %s", token.Kana)
+		Logger.Debug().Err(err).Msgf("failed to decode Kana: %s", token.Kana)
 		return fmt.Errorf("failed to decode Kana: %w", err)
 	}
 
