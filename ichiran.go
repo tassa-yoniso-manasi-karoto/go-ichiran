@@ -19,7 +19,6 @@ import (
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 	"github.com/tidwall/pretty"
-
 	"github.com/docker/docker/api/types"
 )
 
@@ -356,7 +355,9 @@ func Analyze(text string) (*JSONTokens, error) {
 		return nil, fmt.Errorf("failed to inspect exec: %w", err)
 	}
 
-	if inspect.ExitCode != 0 {
+	switch inspect.ExitCode{
+	case 0:
+	default:
 		return nil, fmt.Errorf("command failed with exit code %d: %s",
 			inspect.ExitCode, string(output))
 	}

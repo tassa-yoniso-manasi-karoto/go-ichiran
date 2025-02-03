@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 	"sync"
+	"context"
 
 	"github.com/rs/zerolog"
 	"github.com/gookit/color"
@@ -21,17 +22,19 @@ https://pkg.go.dev/github.com/docker/cli@v27.4.1+incompatible/cli/command
 https://pkg.go.dev/github.com/docker/cli@v27.4.1+incompatible/cli/flags
 */
 
+
 const (
 	remote = "https://github.com/tshatrov/ichiran.git"
 	projectName = "ichiran"
 	containerName = "ichiran-main-1"
+	LogLevel = zerolog.TraceLevel // FIXME still broken idk why
 )
 
 var (
-	QueryTO = 1 * time.Hour
 	instance *docker
 	once sync.Once
 	mu sync.Mutex
+	Ctx = context.TODO()
 )
 
 type docker struct {
@@ -50,7 +53,7 @@ func newDocker() (*docker, error) {
 			Prefix:      projectName,
 			ShowService: true,
 			ShowType:    true,
-			LogLevel:    zerolog.Disabled,
+			LogLevel:    LogLevel,
 			InitMessage: "All set, awaiting commands",
 		}
 		
@@ -58,13 +61,18 @@ func newDocker() (*docker, error) {
 
 		cfg := dockerutil.Config{
 			ProjectName:      projectName,
-			ComposeFile:     "docker-compose.yml",
-			RemoteRepo:      remote,
+			ComposeFile:      "docker-compose.yml",
+			RemoteRepo:       remote,
 			RequiredServices: []string{"main", "pg"},
-			LogConsumer:     logger,
+			LogConsumer:      logger,
+			Timeout:	  dockerutil.Timeout{
+				Create:		60 * time.Second,
+				Recreate:	25 * time.Minute,
+				Start:		60 * time.Second,
+			},
 		}
 
-		manager, err := dockerutil.NewDockerManager(cfg)
+		manager, err := dockerutil.NewDockerManager(Ctx, cfg)
 		if err != nil {
 			initErr = err
 			return
@@ -120,7 +128,7 @@ func MustInit() {
 	if instance == nil {
 		newDocker()
 	}
-	instance.docker.InitRecreate()
+	instance.docker.InitRecreateNoCache()
 }
 
 // Stop stops the ichiran service
@@ -146,13 +154,6 @@ func Status() (string, error) {
 	}
 	return instance.docker.Status()
 }
-
-func SetLogLevel(level zerolog.Level) {
-	if instance != nil {
-		instance.logger.SetLogLevel(level)
-	}
-}
-
 
 
 
