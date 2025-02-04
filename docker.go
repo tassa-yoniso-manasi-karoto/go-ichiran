@@ -27,7 +27,6 @@ const (
 	remote = "https://github.com/tshatrov/ichiran.git"
 	projectName = "ichiran"
 	containerName = "ichiran-main-1"
-	DockerLogLevel = zerolog.TraceLevel
 )
 
 var (
@@ -36,6 +35,7 @@ var (
 	mu sync.Mutex
 	Ctx = context.TODO()
 	QueryTimeout = 45 * time.Minute
+	DockerLogLevel = zerolog.TraceLevel
 )
 
 type docker struct {
