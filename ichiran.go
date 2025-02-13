@@ -35,7 +35,7 @@ var (
 // JSONToken represents a single token with all its analysis information
 type JSONToken struct {
 	Surface     string 	`json:"text"`		// Original text
-	IsToken     bool				// Whether this is a Japanese token or non-Japanese text
+	IsLexical   bool				// Whether this is a Japanese token or non-Japanese text
 	Reading     string      `json:"reading"`	// Reading with kanji and kana
 	Kana        string      `json:"kana"`		// Kana reading
 	Romaji      string				// Romanized form from ichiran
@@ -53,7 +53,7 @@ type JSONToken struct {
 // that will spearhead the JSONToken for consistency's sake
 type jsonTokenCore struct {
 	Surface     string 	`json:"text"`		// Original text
-	IsToken     bool				// Whether this is a Japanese token or non-Japanese text
+	IsLexical   bool				// Whether this is a Japanese token or non-Japanese text
 	Reading     string      `json:"reading"`	// Reading with kanji and kana
 	Kana        string      `json:"kana"`		// Kana reading
 	Romaji      string				// Romanized form from ichiran
@@ -63,19 +63,19 @@ type jsonTokenCore struct {
 // extractCore returns only the core fields from a JSONToken
 func extractCore(token JSONToken) jsonTokenCore {
 	return jsonTokenCore{
-		Surface: token.Surface,
-		IsToken: token.IsToken,
-		Reading: token.Reading,
-		Kana:    token.Kana,
-		Romaji:  token.Romaji,
-		Score:   token.Score,
+		Surface:	token.Surface,
+		IsLexical:	token.IsLexical,
+		Reading:	token.Reading,
+		Kana:		token.Kana,
+		Romaji:		token.Romaji,
+		Score:		token.Score,
 	}
 }
 
 // applyCore applies the core fields to a JSONToken
 func (token *JSONToken) applyCore(core jsonTokenCore) {
 	token.Surface = core.Surface
-	token.IsToken = core.IsToken
+	token.IsLexical = core.IsLexical
 	token.Reading = core.Reading
 	token.Kana = core.Kana
 	token.Romaji = core.Romaji
@@ -133,7 +133,7 @@ func (tokens JSONTokens) Kana() string {
 // KanaParts returns a slice of all tokens in kana form where available.
 func (tokens JSONTokens) KanaParts() (parts []string) {
 	for _, token := range tokens {
-		if token.IsToken && token.Kana != "" {
+		if token.IsLexical && token.Kana != "" {
 			parts = append(parts, token.Kana)
 		} else {
 			parts = append(parts, token.Surface)
@@ -152,7 +152,7 @@ func (tokens JSONTokens) Roman() string {
 // RomanParts returns a slice of all tokens in romanized form.
 func (tokens JSONTokens) RomanParts() (parts []string) {
 	for _, token := range tokens {
-		if token.IsToken && token.Romaji != "" {
+		if token.IsLexical && token.Romaji != "" {
 			parts = append(parts, token.Romaji)
 		} else {
 			parts = append(parts, token.Surface)
@@ -172,7 +172,7 @@ func (tokens JSONTokens) ToMorphemes() JSONTokens {
 				// Create a copy of the component
 				morpheme := &JSONToken{
 					Surface:     component.Surface,
-					IsToken:     true, // Components are always tokens
+					IsLexical:   true, // Components are always lexical content
 					Reading:     component.Reading,
 					Kana:        component.Kana,
 					Romaji:      component.Romaji,
@@ -210,7 +210,7 @@ func (tokens JSONTokens) GlossParts() (parts []string) {
 	morphemes := tokens.ToMorphemes()
 	
 	for _, token := range morphemes {
-		if !token.IsToken {
+		if !token.IsLexical {
 			parts = append(parts, token.Surface)
 			continue
 		}
@@ -573,13 +573,13 @@ func parseOutput(output []byte) (JSONTokens, error) {
 			}
 			tokens = append(tokens, &JSONToken{
 				Surface: unescaped,
-				IsToken: false,
+				IsLexical: false,
 			})
 		case []interface{}:
 			extracted := extractTokens(v)
 			if len(extracted) > 0 {
 				for _, t := range extracted {
-					t.IsToken = true
+					t.IsLexical = true
 					tokens = append(tokens, &t)
 				}
 			} else {
