@@ -51,6 +51,14 @@ func getKanjiReadings(text string) ([]kanjiReadingResult, error) {
 
 	// Get the kana reading
 	kanaReading := tokens.Kana()
+	
+	// Kana may have space in them with causes the match reading command below to fail:
+	// 	Surface:     "だから",
+	// 	IsLexical:   true,
+	//	Reading:     "だから",
+	//	Kana:        "だ から",
+	// 	Romaji:      "da kara",
+	kanaReading = strings.ReplaceAll(kanaReading, " ", "")
 
 	ctx, cancel := context.WithTimeout(Ctx, QueryTimeout)
 	defer cancel()
@@ -207,16 +215,16 @@ func (tokens JSONTokens) selectiveTranslit(freqThreshold int) (*TransliterationR
 
 	// Process each chunk
 	for _, chunk := range chunks {
-		if !chunk.processable {
-			// Preserve non-processable chunks as-is
-			token := ProcessedToken{
-				Original: chunk.text,
-				Result:   chunk.text,
-				Status:   StatusNotKanji,
-			}
-			finalResult.WriteString(chunk.text)
-			allProcessedTokens = append(allProcessedTokens, token)
-			continue
+		if !chunk.processable || !ContainsKanjis(chunk.text) {
+				// Preserve non-processable chunks as-is
+				token := ProcessedToken{
+					Original: chunk.text,
+					Result:   chunk.text,
+					Status:   StatusNotKanji,
+				}
+				finalResult.WriteString(chunk.text)
+				allProcessedTokens = append(allProcessedTokens, token)
+				continue
 		}
 
 		// Process Japanese text chunks
@@ -338,6 +346,15 @@ func splitIntoChunks(text string) []struct {
 	flushOther()
 
 	return chunks
+}
+
+func ContainsKanjis(s string) bool {
+	for _, r := range s {
+		if unicode.Is(unicode.Han, r) {
+			return true
+		}
+	}
+	return false
 }
 
 

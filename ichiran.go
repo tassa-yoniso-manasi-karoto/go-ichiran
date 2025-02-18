@@ -126,7 +126,7 @@ func (tokens JSONTokens) TokenizedParts() (parts []string) {
 // Kana returns a string of all tokens in kana form where available.
 func (tokens JSONTokens) Kana() string {
 	parts := tokens.KanaParts()
-	s := strings.Join(parts, " ")
+	s := strings.Join(parts, "")
 	return reMultipleSpacesSeq.ReplaceAllString(s, ", ")
 }
 

@@ -33,7 +33,7 @@ var (
 	instance *docker
 	once sync.Once
 	mu sync.Mutex
-	Ctx = context.TODO()
+	Ctx = context.Background()
 	QueryTimeout = 45 * time.Minute
 	DockerLogLevel = zerolog.TraceLevel
 )
