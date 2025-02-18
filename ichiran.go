@@ -13,12 +13,14 @@ import (
 	"reflect"
 	"regexp"
 	"strings"
+	"bufio"
 
 	"github.com/gookit/color"
 	"github.com/k0kubun/pp"
 	"github.com/rs/zerolog"
 	"github.com/tidwall/pretty"
 	"github.com/docker/docker/api/types"
+	"al.essio.dev/pkg/shellescape"
 )
 
 const (
@@ -29,6 +31,7 @@ var (
 	reMultipleSpacesSeq = regexp.MustCompile(`\s{2,}`)
 	Logger = zerolog.Nop()
 	// Logger = zerolog.New(zerolog.ConsoleWriter{Out: os.Stderr, TimeFormat: time.TimeOnly}).With().Timestamp().Logger()
+	errNoJSONFound = fmt.Errorf("no valid JSON line found in output")
 )
 
 
@@ -338,8 +341,7 @@ func Analyze(text string) (*JSONTokens, error) {
 	}
 	defer resp.Close()
 
-	// Read output
-	output, err := readDockerOutput(resp.Reader)
+	output, err := extractJSONFromDockerOutput(resp.Reader)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read exec output: %w", err)
 	}
@@ -368,12 +370,13 @@ func Analyze(text string) (*JSONTokens, error) {
 
 
 // safe escapes special characters in the input text for shell command usage.
-func safe(text string) (s string) {
-	// FIXME probably for robust approach with a lib
-	s = strings.Replace(text, "\"", "\\\"", -1)
+func safe(s string) string {
+	s = shellescape.Quote(s)
+	//s = strings.ReplaceAll(s, "\"", "\\\"")
 	// leading "-" causes the string to be identified by the CLI as a serie of short flags
 	return strings.TrimPrefix(s, "-")
 }
+
 
 // readDockerOutput reads and processes multiplexed output from Docker.
 func readDockerOutput(reader io.Reader) ([]byte, error) {
@@ -387,27 +390,59 @@ func readDockerOutput(reader io.Reader) ([]byte, error) {
 			}
 			return nil, fmt.Errorf("failed to read header: %w", err)
 		}
-
 		// Get the payload size from the header
 		payloadSize := binary.BigEndian.Uint32(header[4:])
 		if payloadSize == 0 {
 			continue
 		}
-
 		// Read the payload
 		payload := make([]byte, payloadSize)
 		_, err = io.ReadFull(reader, payload)
 		if err != nil {
 			return nil, fmt.Errorf("failed to read payload: %w", err)
 		}
-
 		// Append to output buffer
 		output.Write(payload)
 	}
-
-	// Trim any trailing whitespace or newlines
 	return bytes.TrimSpace(output.Bytes()), nil
 }
+
+// extractJSONFromDockerOutput combines reading Docker output and extracting JSON
+func extractJSONFromDockerOutput(reader io.Reader) ([]byte, error) {
+	// First, read the Docker multiplexed output.
+	rawOutput, err := readDockerOutput(reader)
+	if err != nil {
+		return nil, fmt.Errorf("error reading docker output: %w", err)
+	}
+
+	// Use bufio.Reader so we can read arbitrarily long lines.
+	r := bufio.NewReader(bytes.NewReader(rawOutput))
+	for {
+		line, err := r.ReadBytes('\n')
+		// Trim any extra whitespace.
+		line = bytes.TrimSpace(line)
+		if len(line) > 0 {
+			// Check if the line starts with a JSON array or object.
+			if line[0] == '[' || line[0] == '{' {
+				var tmp interface{}
+				// Validate that it's actually JSON.
+				if err := json.Unmarshal(line, &tmp); err == nil {
+					return line, nil
+				}
+			}
+		}
+
+		if err == io.EOF {
+			break
+		} else if err != nil {
+			return nil, fmt.Errorf("error reading line: %w", err)
+		}
+	}
+
+	return nil, errNoJSONFound
+}
+
+
 
 // IMPORTANT: jsonformatter.org is very helpful to help understand ichiran's JSON:
 // 	as it both prettifies and converts unicode codepoints to literals

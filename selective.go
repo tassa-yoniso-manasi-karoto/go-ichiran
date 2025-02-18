@@ -82,7 +82,7 @@ func getKanjiReadings(text string) ([]kanjiReadingResult, error) {
 		"bash",
 		"-c",
 		fmt.Sprintf("ichiran-cli -e '(jsown:to-json (ichiran/kanji:match-readings-json \"%s\" \"%s\"))'",
-			safe(text), safe(kanaReading)),
+			text, kanaReading),
 	}
 
 	// Create execution config
