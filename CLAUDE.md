@@ -1,0 +1,35 @@
+# Go-Ichiran Development Guide
+
+## Build & Test Commands
+- Run tests: `ICHIRAN_MANUAL_TEST=1 go test ./...`
+- Run specific test: `ICHIRAN_MANUAL_TEST=1 go test -run TestName`
+- Start containers only: `docker compose up`
+- Force container rebuild: Use `docker.InitForce()` in code
+- Format code: `gofmt -w *.go`
+- Lint code: `go vet ./...`
+
+## Code Style Guidelines
+- Format with gofmt
+- Errors: Use `fmt.Errorf("message: %w", err)` for error wrapping
+- Logging: Use zerolog package (`github.com/rs/zerolog`)
+- Variable naming: camelCase for private, PascalCase for exported
+- Struct fields alignment: Align adjacent field names and tags
+- Error handling: Check all errors, don't use panic
+- Documentation: Add doc comments for all exported functions/types
+- Imports: Group standard library, third-party, and local imports
+- Testing: Use testify/assert for assertions
+- Constants: Use package-level const/var blocks for related values
+- Unicode handling: Use unescapeUnicodeString for string processing
+
+## Ichiran Lisp Integration
+- Execute Lisp code via `docker exec -it ichiran-main-1 ichiran-cli -e '(expression)'`
+- Always escape user input with shellescape.Quote
+- Extract JSON from output using extractJSONFromDockerOutput to handle warnings
+- For complex operations, chain multiple Lisp expressions in a single call
+
+
+## Code management
+- do not git add or revert go.mod or go.sum
+- do not git diff or git pull
+- do not write commit messages in the "convential commit" style
+- you must briefly mention all noteworthy changes within the "main" message of git commit and separate them using semicolons.

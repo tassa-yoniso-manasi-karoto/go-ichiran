@@ -1,288 +1,25 @@
-// Package ichiran provides functionality for Japanese text analysis using Docker containers
-// and the ichiran morphological analyzer.
-
 package ichiran
 
 import (
-	"bytes"
 	"context"
-	"encoding/binary"
 	"encoding/json"
 	"fmt"
-	"io"
-	"reflect"
-	"regexp"
 	"strings"
-	"bufio"
 
+	"al.essio.dev/pkg/shellescape"
 	"github.com/gookit/color"
 	"github.com/k0kubun/pp"
-	"github.com/rs/zerolog"
 	"github.com/tidwall/pretty"
+
 	"github.com/docker/docker/api/types"
-	"al.essio.dev/pkg/shellescape"
 )
 
-const (
-	ContainerName = "ichiran-main-1"
-)
+// IMPORTANT: jsonformatter.org is very helpful to help understand ichiran's JSON:
+// 	as it both prettifies and converts unicode codepoints to literals
 
-var (
-	reMultipleSpacesSeq = regexp.MustCompile(`\s{2,}`)
-	Logger = zerolog.Nop()
-	// Logger = zerolog.New(zerolog.ConsoleWriter{Out: os.Stderr, TimeFormat: time.TimeOnly}).With().Timestamp().Logger()
-	errNoJSONFound = fmt.Errorf("no valid JSON line found in output")
-)
-
-
-// JSONToken represents a single token with all its analysis information
-type JSONToken struct {
-	Surface     string 	`json:"text"`		// Original text
-	IsLexical   bool				// Whether this is a Japanese token or non-Japanese text
-	Reading     string      `json:"reading"`	// Reading with kanji and kana
-	Kana        string      `json:"kana"`		// Kana reading
-	Romaji      string				// Romanized form from ichiran
-	Score       int         `json:"score"`          // Analysis score
-	Seq         int         `json:"seq"`            // Sequence number
-	Gloss       []Gloss     `json:"gloss"`          // English meanings
-	Conj        []Conj      `json:"conj,omitempty"` // Conjugation information
-	Alternative []JSONToken `json:"alternative"`    // Alternative interpretations
-	Compound    []string    `json:"compound"`	// Delineable elements of compound expressions
-	Components  []JSONToken	`json:"components"`	// Details of delineable elements of compound expressions
-	Raw []byte `json:"-"`				// Raw JSON for future processing
-}
-
-// in case of multiple alternative, jsonTokenCore represents the essential information that are shared,
-// that will spearhead the JSONToken for consistency's sake
-type jsonTokenCore struct {
-	Surface     string 	`json:"text"`		// Original text
-	IsLexical   bool				// Whether this is a Japanese token or non-Japanese text
-	Reading     string      `json:"reading"`	// Reading with kanji and kana
-	Kana        string      `json:"kana"`		// Kana reading
-	Romaji      string				// Romanized form from ichiran
-	Score       int         `json:"score"`          // Analysis score
-}
-
-// extractCore returns only the core fields from a JSONToken
-func extractCore(token JSONToken) jsonTokenCore {
-	return jsonTokenCore{
-		Surface:	token.Surface,
-		IsLexical:	token.IsLexical,
-		Reading:	token.Reading,
-		Kana:		token.Kana,
-		Romaji:		token.Romaji,
-		Score:		token.Score,
-	}
-}
-
-// applyCore applies the core fields to a JSONToken
-func (token *JSONToken) applyCore(core jsonTokenCore) {
-	token.Surface = core.Surface
-	token.IsLexical = core.IsLexical
-	token.Reading = core.Reading
-	token.Kana = core.Kana
-	token.Romaji = core.Romaji
-	token.Score = core.Score
-}
-
-// JSONTokens is a slice of token pointers representing a complete analysis result.
-type JSONTokens []*JSONToken
-
-// Gloss represents the English glosses and part of speech
-type Gloss struct {
-	Pos   string `json:"pos"`   // Part of speech
-	Gloss string `json:"gloss"` // English meaning
-	Info  string `json:"info"`  // Additional information
-}
-
-// Conj represents conjugation information
-type Conj struct {
-	Prop    []Prop  `json:"prop"`    // Conjugation properties
-	Reading string  `json:"reading"` // Base form reading
-	Gloss   []Gloss `json:"gloss"`   // Base form meanings
-	ReadOk  bool    `json:"readok"`  // Reading validity flag
-}
-
-// Prop represents grammatical properties
-type Prop struct {
-	Pos  string `json:"pos"`  // Part of speech
-	Type string `json:"type"` // Type of conjugation
-	Neg  bool   `json:"neg"`  // Negation flag
-}
-
-
-// TokenizedStr returns a string of all tokens separated by spaces or commas.
-func (tokens JSONTokens) Tokenized() string {
-	parts := tokens.TokenizedParts()
-	s := strings.Join(parts, " ")
-	return reMultipleSpacesSeq.ReplaceAllString(s, ", ")
-}
-
-// TokenizedParts returns a slice of all token surfaces.
-func (tokens JSONTokens) TokenizedParts() (parts []string) {
-	for _, token := range tokens {
-		parts = append(parts, token.Surface)
-	}
-	return
-}
-
-// Kana returns a string of all tokens in kana form where available.
-func (tokens JSONTokens) Kana() string {
-	parts := tokens.KanaParts()
-	s := strings.Join(parts, "")
-	return reMultipleSpacesSeq.ReplaceAllString(s, ", ")
-}
-
-// KanaParts returns a slice of all tokens in kana form where available.
-func (tokens JSONTokens) KanaParts() (parts []string) {
-	for _, token := range tokens {
-		if token.IsLexical && token.Kana != "" {
-			parts = append(parts, token.Kana)
-		} else {
-			parts = append(parts, token.Surface)
-		}
-	}
-	return
-}
-
-// Roman returns a string of all tokens in romanized form.
-func (tokens JSONTokens) Roman() string {
-	parts := tokens.RomanParts()
-	s := strings.Join(parts, " ")
-	return reMultipleSpacesSeq.ReplaceAllString(s, ", ")
-}
-
-// RomanParts returns a slice of all tokens in romanized form.
-func (tokens JSONTokens) RomanParts() (parts []string) {
-	for _, token := range tokens {
-		if token.IsLexical && token.Romaji != "" {
-			parts = append(parts, token.Romaji)
-		} else {
-			parts = append(parts, token.Surface)
-		}
-	}
-	return
-}
-
-// ToMorphemes returns a new slice of tokens where compound tokens are replaced by their constituent morphemes
-func (tokens JSONTokens) ToMorphemes() JSONTokens {
-	var morphemes JSONTokens
-
-	for _, token := range tokens {
-		// If token has components, add them instead of the original token
-		if len(token.Components) > 0 {
-			for _, component := range token.Components {
-				// Create a copy of the component
-				morpheme := &JSONToken{
-					Surface:     component.Surface,
-					IsLexical:   true, // Components are always lexical content
-					Reading:     component.Reading,
-					Kana:        component.Kana,
-					Romaji:      component.Romaji,
-					Score:       component.Score,
-					Seq:         component.Seq,
-					Gloss:       component.Gloss,
-					Conj:        component.Conj,
-					Alternative: component.Alternative,
-					Compound:    component.Compound,
-					Components:  component.Components,
-					Raw:        component.Raw,
-				}
-				morphemes = append(morphemes, morpheme)
-			}
-		} else {
-			// If no components, add the original token
-			morphemes = append(morphemes, token)
-		}
-	}
-
-	return morphemes
-}
-
-// Gloss returns a formatted string containing tokens and their English glosses
-// including morphemes and alternative interpretations.
-func (tokens JSONTokens) Gloss() string {
-	parts := tokens.GlossParts()
-	return strings.Join(parts, " ")
-}
-
-
-// GlossParts returns a slice of strings containing tokens and their English glosses,
-// including morphemes and alternative interpretations.
-func (tokens JSONTokens) GlossParts() (parts []string) {
-	morphemes := tokens.ToMorphemes()
-	
-	for _, token := range morphemes {
-		if !token.IsLexical {
-			parts = append(parts, token.Surface)
-			continue
-		}
-
-		// Handle tokens with alternatives
-		if len(token.Alternative) > 0 {
-			var altGlosses []string
-			
-			// Add glosses from each alternative
-			for i, alt := range token.Alternative {
-				glosses := alt.getGlosses()
-				if len(glosses) > 0 {
-					altGlosses = append(altGlosses, fmt.Sprintf("ALT%d: %s",
-						i+1,
-						strings.Join(glosses, "; ")))
-				}
-			}
-			
-			if len(altGlosses) > 0 {
-				parts = append(parts, fmt.Sprintf("%s (%s)",
-					token.Surface,
-					strings.Join(altGlosses, " | ")))
-			} else {
-				parts = append(parts, token.Surface)
-			}
-			continue
-		}
-
-		// Handle regular tokens
-		glosses := token.getGlosses()
-		if len(glosses) > 0 {
-			parts = append(parts, fmt.Sprintf("%s(%s)",
-				token.Surface,
-				strings.Join(glosses, "; ")))
-		} else {
-			parts = append(parts, token.Surface)
-		}
-	}
-	
-	return
-}
-
-
-/// getGlosses extracts all glosses from both direct Gloss field and Conj field
-func (token *JSONToken) getGlosses() []string {
-	var glosses []string
-	
-	// Add direct glosses
-	for _, g := range token.Gloss {
-		glosses = append(glosses, g.Gloss)
-	}
-	
-	// Add glosses from conjugations
-	for _, c := range token.Conj {
-		for _, g := range c.Gloss {
-			glosses = append(glosses, g.Gloss)
-		}
-	}
-	
-	return glosses
-}
-
-
-
-//############################################################################
-
-// Analyze performs morphological analysis on the input Japanese text.
-// Returns parsed tokens or an error if analysis fails.
-// Analyze performs Japanese text analysis using ichiran
+// Analyze performs a single call to get morphological analysis, kanji-kana mappings,
+// romanization, and all other relevant information using the optimized Lisp snippet.
+// This is the most efficient way to analyze text as it gets all data in a single call.
 func Analyze(text string) (*JSONTokens, error) {
 	ctx, cancel := context.WithTimeout(Ctx, QueryTimeout)
 	defer cancel()
@@ -295,28 +32,61 @@ func Analyze(text string) (*JSONTokens, error) {
 		return nil, fmt.Errorf("Docker manager not initialized. Call Init() first")
 	}
 
-	// Get Docker client from dockerutil
+	// Get Docker client
 	client, err := docker.docker.GetClient()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get Docker client: %w", err)
 	}
 
 	// Check container status
-	containerInfo, err := client.ContainerInspect(ctx, containerName)
+	containerInfo, err := client.ContainerInspect(ctx, ContainerName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to inspect container: %w", err)
 	}
 
 	if !containerInfo.State.Running {
-		return nil, fmt.Errorf("container %s is not running", containerName)
+		return nil, fmt.Errorf("container %s is not running", ContainerName)
 	}
 
+	// Load the optimized Lisp snippet and replace the placeholder
+	lispCode := fmt.Sprintf(`(progn
+    (ql:quickload :jsown :silent t)
+    
+    (defmethod jsown:to-json ((word-info ichiran/dict::word-info))
+      (let* ((gloss-json (handler-case
+                            (ichiran::word-info-gloss-json word-info)
+                          (error (e) (declare (ignore e)) nil)))
+             (match-json (handler-case
+                            (ichiran/kanji:match-readings-json
+                              (slot-value word-info (quote ichiran/dict::text))
+                              (slot-value word-info (quote ichiran/dict::kana)))
+                          (error (e) (declare (ignore e)) nil)))
+             
+             (word-json (ichiran::word-info-json word-info)))
+        
+        (when gloss-json
+          (jsown:extend-js word-json ("gloss" gloss-json)))
+        
+        (when match-json
+          (jsown:extend-js word-json ("match" match-json)))
+        
+        (jsown:to-json word-json)))
+    
+    (jsown:to-json (ichiran::romanize* "%s" :limit 1)))`, text)
+
+	// Remove Lisp comments and clean up the code for the shell command
+	lispCode = cleanLispCode(lispCode)
+
 	// Prepare command
+	execCommand := fmt.Sprintf("ichiran-cli -e '%s'", lispCode)
 	cmd := []string{
 		"bash",
 		"-c",
-		fmt.Sprintf("ichiran-cli -f \"%s\"", safe(text)),
+		execCommand,
 	}
+
+	// Print the command for debugging
+	fmt.Printf("EXECUTING DOCKER COMMAND:\n%s\n", execCommand)
 
 	// Create execution config
 	execConfig := types.ExecConfig{
@@ -329,7 +99,7 @@ func Analyze(text string) (*JSONTokens, error) {
 	}
 
 	// Create execution
-	exec, err := client.ContainerExecCreate(ctx, containerName, execConfig)
+	exec, err := client.ContainerExecCreate(ctx, ContainerName, execConfig)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create exec: %w", err)
 	}
@@ -341,6 +111,7 @@ func Analyze(text string) (*JSONTokens, error) {
 	}
 	defer resp.Close()
 
+	// Extract JSON from the output
 	output, err := extractJSONFromDockerOutput(resp.Reader)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read exec output: %w", err)
@@ -352,22 +123,19 @@ func Analyze(text string) (*JSONTokens, error) {
 		return nil, fmt.Errorf("failed to inspect exec: %w", err)
 	}
 
-	switch inspect.ExitCode{
-	case 0:
-	default:
+	if inspect.ExitCode != 0 {
 		return nil, fmt.Errorf("command failed with exit code %d: %s",
 			inspect.ExitCode, string(output))
 	}
 
-	// Parse output
-	tokens, err := parseOutput(output)
+	// Parse the JSON output into tokens
+	tokens, err := parseAnalysis(output)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse output: %w", err)
 	}
 
-	return &tokens, nil
+	return tokens, nil
 }
-
 
 // safe escapes special characters in the input text for shell command usage.
 func safe(s string) string {
@@ -375,259 +143,6 @@ func safe(s string) string {
 	//s = strings.ReplaceAll(s, "\"", "\\\"")
 	// leading "-" causes the string to be identified by the CLI as a serie of short flags
 	return strings.TrimPrefix(s, "-")
-}
-
-
-// readDockerOutput reads and processes multiplexed output from Docker.
-func readDockerOutput(reader io.Reader) ([]byte, error) {
-	var output bytes.Buffer
-	header := make([]byte, 8)
-	for {
-		_, err := io.ReadFull(reader, header)
-		if err != nil {
-			if err == io.EOF {
-				break
-			}
-			return nil, fmt.Errorf("failed to read header: %w", err)
-		}
-		// Get the payload size from the header
-		payloadSize := binary.BigEndian.Uint32(header[4:])
-		if payloadSize == 0 {
-			continue
-		}
-		// Read the payload
-		payload := make([]byte, payloadSize)
-		_, err = io.ReadFull(reader, payload)
-		if err != nil {
-			return nil, fmt.Errorf("failed to read payload: %w", err)
-		}
-		// Append to output buffer
-		output.Write(payload)
-	}
-	return bytes.TrimSpace(output.Bytes()), nil
-}
-
-// extractJSONFromDockerOutput combines reading Docker output and extracting JSON
-func extractJSONFromDockerOutput(reader io.Reader) ([]byte, error) {
-	// First, read the Docker multiplexed output.
-	rawOutput, err := readDockerOutput(reader)
-	if err != nil {
-		return nil, fmt.Errorf("error reading docker output: %w", err)
-	}
-
-	// Use bufio.Reader so we can read arbitrarily long lines.
-	r := bufio.NewReader(bytes.NewReader(rawOutput))
-	for {
-		line, err := r.ReadBytes('\n')
-		// Trim any extra whitespace.
-		line = bytes.TrimSpace(line)
-		if len(line) > 0 {
-			// Check if the line starts with a JSON array or object.
-			if line[0] == '[' || line[0] == '{' {
-				var tmp interface{}
-				// Validate that it's actually JSON.
-				if err := json.Unmarshal(line, &tmp); err == nil {
-					return line, nil
-				}
-			}
-		}
-
-		if err == io.EOF {
-			break
-		} else if err != nil {
-			return nil, fmt.Errorf("error reading line: %w", err)
-		}
-	}
-
-	return nil, errNoJSONFound
-}
-
-
-
-// IMPORTANT: jsonformatter.org is very helpful to help understand ichiran's JSON:
-// 	as it both prettifies and converts unicode codepoints to literals
-
-// extractTokens converts raw JSON data into structured token information.
-func extractTokens(group []interface{}) []JSONToken {
-	var tokens []JSONToken
-
-	if len(group) < 1 {
-		Logger.Error().Msgf("group too short: %v", group)
-		return tokens
-	}
-
-	layer, ok := group[0].([]interface{})
-	if !ok {
-		Logger.Error().Msgf("failed to assert layer: expected []interface{}, got %s with value: %#v",
-			reflect.TypeOf(group[0]), group[0])
-		return tokens
-	}
-
-	tokenGroups, ok := layer[0].([]interface{})
-	if !ok {
-		Logger.Error().Msgf("failed to assert tokenGroups: expected []interface{}, got %s with value: %#v",
-			reflect.TypeOf(group[0]), group[0])
-		return tokens
-	}
-
-	// Process each token group
-	for _, tokenGroup := range tokenGroups {
-		// Skip if it's a number, I guess it's something internal to ichiran idk
-		if _, ok := tokenGroup.(json.Number); ok {
-			continue
-		}
-
-		tokenEntry, ok := tokenGroup.([]interface{})
-		if !ok {
-			Logger.Error().Msgf("failed to assert tokenEntry: expected []interface{}, got %s with value: %#v",
-				reflect.TypeOf(tokenGroup), tokenGroup)
-			continue
-		}
-
-		if len(tokenEntry) < 3 {
-			Logger.Error().Msgf("tokenEntry too short: %#v", tokenEntry)
-			continue
-		}
-
-		// First element is romaji
-		romaji, ok := tokenEntry[0].(string)
-		if !ok {
-			pp.Println(tokenEntry[0])
-			Logger.Error().Msgf("failed to assert romaji: expected string, got %s with value: %#v",
-				reflect.TypeOf(tokenEntry[0]), tokenEntry[0])
-			continue
-		}
-
-		// Second element can be either direct token data or an object with alternatives
-		data, ok := tokenEntry[1].(map[string]interface{})
-		if !ok {
-			Logger.Error().Msgf("failed to assert token map: expected map[string]interface{}, got %s with value: %#v",
-				reflect.TypeOf(tokenEntry[1]), tokenEntry[1])
-			continue
-		}
-
-		var token JSONToken
-
-		// Check if this is an alternative structure
-		if altInterface, hasAlt := data["alternative"]; hasAlt {
-			altArray, ok := altInterface.([]interface{})
-			if !ok {
-				Logger.Error().Msgf("failed to assert alternative array: got %T", altInterface)
-				continue
-			}
-
-			// Parse all alternatives
-			var alternatives []JSONToken
-			for _, alt := range altArray {
-				altBytes, err := json.Marshal(alt)
-				if err != nil {
-					Logger.Error().Err(err).Msg("failed to marshal alternative")
-					continue
-				}
-
-				var altToken JSONToken
-				if err := json.Unmarshal(altBytes, &altToken); err != nil {
-					// ERR failed to unmarshal alternative error="json: cannot unmarshal array into Go struct field Conj.conj.readok of type bool"
-					Logger.Error().Str("altBytes", string(pretty.Pretty(altBytes))).Err(err).Msg("failed to unmarshal alternative")
-					continue
-				}
-
-				if err := decodeToken(&altToken); err != nil {
-					Logger.Error().Err(err).Msg("failed to decode alternative token")
-					continue
-				}
-
-				alternatives = append(alternatives, altToken)
-			}
-
-			if len(alternatives) > 0 {
-				// Extract core fields from first alternative
-				core := extractCore(alternatives[0])
-				
-				// Create new token with only core fields: it will be the "main"/visible token in JSONTokens
-				token = JSONToken{}
-				token.applyCore(core)
-				
-				// Store all alternatives
-				token.Alternative = alternatives
-			} else {
-				continue // Skip if no valid alternatives
-			}
-		} else {
-			// Direct token data
-			tokenBytes, err := json.Marshal(data)
-			if err != nil {
-				Logger.Error().Err(err).Msgf("failed to marshal token data of type %s: %#v",
-					reflect.TypeOf(data), data)
-				continue
-			}
-
-			if err := json.Unmarshal(tokenBytes, &token); err != nil {
-				Logger.Error().Err(err).Msgf("failed to unmarshal token data: %s", string(tokenBytes))
-				continue
-			}
-
-			if err := decodeToken(&token); err != nil {
-				Logger.Error().Err(err).Msgf("failed to decode token: %#v", token)
-				continue
-			}
-		}
-
-		token.Romaji = romaji
-		tokens = append(tokens, token)
-	}
-
-	return tokens
-}
-
-// parseOutput converts raw Docker output into structured token data.
-func parseOutput(output []byte) (JSONTokens, error) {
-	//fmt.Println(string(pretty.Pretty(output)))
-	var rawResult []interface{}
-	decoder := json.NewDecoder(bytes.NewReader(output))
-	decoder.UseNumber()
-	if err := decoder.Decode(&rawResult); err != nil {
-		println(stringCapLen(string(output), 1000))
-		Logger.Fatal().Err(err).Msg("failed to decode JSON")
-		return nil, fmt.Errorf("failed to decode JSON: %w", err)
-	}
-
-	//Logger.Debug().Msgf("Raw result structure type: %s", reflect.TypeOf(rawResult))
-	/*for i, item := range rawResult {
-		Logger.Trace().Msgf("Item %d type: %s, value: %#v", i, reflect.TypeOf(item), item)
-	}*/
-
-	var tokens JSONTokens
-
-	for _, item := range rawResult {
-		switch v := item.(type) {
-		case string:
-			unescaped, err := unescapeUnicodeString(v)
-			if err != nil {
-				return nil, fmt.Errorf("failed to decode segment: %w", err)
-			}
-			tokens = append(tokens, &JSONToken{
-				Surface: unescaped,
-				IsLexical: false,
-			})
-		case []interface{}:
-			extracted := extractTokens(v)
-			if len(extracted) > 0 {
-				for _, t := range extracted {
-					t.IsLexical = true
-					tokens = append(tokens, &t)
-				}
-			} else {
-				Logger.Error().Msgf("No tokens extracted from type %s: %#v",
-					reflect.TypeOf(v), v)
-			}
-		default:
-			Logger.Debug().Msgf("Unexpected type in rawResult: %s value: %#v",
-				reflect.TypeOf(item), item)
-		}
-	}
-
-	return tokens, nil
 }
 
 // decodeToken processes Unicode escapes and other encodings in token fields.
@@ -653,8 +168,8 @@ func decodeToken(token *JSONToken) error {
 func unescapeUnicodeString(s string) (string, error) {
 	// Kana field can contain a forbidden jutsu: \u200c = ZERO WIDTH NON-JOINER
 	// however it is (apparently) automatically rendered by JSON decoder from its codepoint into a literal in Go
-	// so it must replaced manually. 
-	s = strings.ReplaceAll(s, /*ZERO WIDTH NON-JOINER*/"‌", "")
+	// so it must replaced manually.
+	s = strings.ReplaceAll(s /*ZERO WIDTH NON-JOINER*/, "‌", "")
 	// If the string doesn't contain any \u, return as is
 	if !strings.Contains(s, "\\u") {
 		return s, nil
@@ -669,8 +184,6 @@ func unescapeUnicodeString(s string) (string, error) {
 	return unquoted, nil
 }
 
-
-
 func stringCapLen(s string, max int) string {
 	trimmed := false
 	for len(s) > max {
@@ -683,8 +196,424 @@ func stringCapLen(s string, max int) string {
 	return s
 }
 
+// parseAnalysis parses the JSON output from the enhanced Lisp snippet
+// This function handles the complex nested JSON structure including readings,
+// translations, and kanji-kana mappings.
+func parseAnalysis(output []byte) (*JSONTokens, error) {
+	// First, unmarshal the JSON into a nested structure
+	var rawData interface{}
+	if err := json.Unmarshal(output, &rawData); err != nil {
+		return nil, fmt.Errorf("failed to decode JSON output: %w", err)
+	}
+
+	// Debug view of the JSON structure
+	Logger.Debug().Msgf("Raw JSON structure type: %T", rawData)
+
+	var tokens JSONTokens
+
+	// Try to detect the structure format and process it
+	// The JSON structure is deeply nested with mixed arrays and objects
+
+	// Extract the main words array which is deeply nested
+	// We need to navigate through multiple layers of arrays to get to the tokens
+	wordsArray, err := extractWordsArray(rawData)
+	if err != nil {
+		return nil, fmt.Errorf("failed to extract words: %w", err)
+	}
+
+	// Now process each word entry
+	for _, wordEntry := range wordsArray {
+		// A word entry is typically ["romanji", {word data...}, []]
+		wordSlice, ok := wordEntry.([]interface{})
+		if !ok || len(wordSlice) < 2 {
+			// Skip entries that don't match expected format
+			continue
+		}
+
+		// The word data is in the second position of the slice
+		wordData, ok := wordSlice[1].(map[string]interface{})
+		if !ok {
+			// Skip entries with invalid word data
+			continue
+		}
+
+		// Create and populate a new token
+		token := &JSONToken{
+			IsLexical: true, // Assume true until proven otherwise
+			Raw:       nil,  // Store raw JSON for future use
+		}
+
+		// Extract the type - determines if lexical or not
+		tokenType, _ := wordData["type"].(string)
+		if tokenType == "KANA" {
+			// Kana tokens are lexical
+			token.IsLexical = true
+		} else if tokenType == "KANJI" {
+			// Kanji tokens are lexical
+			token.IsLexical = true
+		} else if tokenType == "PUNCT" {
+			// Punctuation tokens are not lexical
+			token.IsLexical = false
+		} else {
+			// Other token types may not be lexical
+			token.IsLexical = false
+		}
+
+		// Extract basic fields
+		if text, ok := wordData["text"].(string); ok {
+			token.Surface = text
+		}
+		if kana, ok := wordData["kana"].(string); ok {
+			token.Kana = kana
+		}
+		if score, ok := wordData["score"].(float64); ok {
+			token.Score = int(score)
+		}
+		if seq, ok := wordData["seq"].(float64); ok {
+			token.Seq = int(seq)
+		}
+
+		// Get romanized form - usually in position 0 of the entry
+		if romanji, ok := wordSlice[0].(string); ok {
+			token.Romaji = romanji
+		}
+
+		// Extract the reading from the gloss if available
+		if glossData, ok := wordData["gloss"].(map[string]interface{}); ok {
+			// The reading is sometimes in the gloss object
+			if reading, ok := glossData["reading"].(string); ok {
+				token.Reading = reading
+			}
+
+			// Extract gloss entries
+			if glossEntries, ok := glossData["gloss"].([]interface{}); ok {
+				for _, g := range glossEntries {
+					if glossMap, ok := g.(map[string]interface{}); ok {
+						gloss := Gloss{}
+
+						if pos, ok := glossMap["pos"].(string); ok {
+							gloss.Pos = pos
+						}
+						if glossText, ok := glossMap["gloss"].(string); ok {
+							gloss.Gloss = glossText
+						}
+						if info, ok := glossMap["info"].(string); ok {
+							gloss.Info = info
+						}
+
+						token.Gloss = append(token.Gloss, gloss)
+					}
+				}
+			}
+		}
+
+		// Extract conjugation information if available
+		if conjData, ok := wordData["conj"].([]interface{}); ok {
+			for _, c := range conjData {
+				if conjMap, ok := c.(map[string]interface{}); ok {
+					conj := Conj{}
+
+					if reading, ok := conjMap["reading"].(string); ok {
+						conj.Reading = reading
+					}
+					if readOk, ok := conjMap["readok"].(bool); ok {
+						conj.ReadOk = readOk
+					}
+
+					// Extract properties
+					if propData, ok := conjMap["prop"].([]interface{}); ok {
+						for _, p := range propData {
+							if propMap, ok := p.(map[string]interface{}); ok {
+								prop := Prop{}
+
+								if pos, ok := propMap["pos"].(string); ok {
+									prop.Pos = pos
+								}
+								if propType, ok := propMap["type"].(string); ok {
+									prop.Type = propType
+								}
+								if neg, ok := propMap["neg"].(bool); ok {
+									prop.Neg = neg
+								}
+
+								conj.Prop = append(conj.Prop, prop)
+							}
+						}
+					}
+
+					// Extract gloss entries for this conjugation
+					if glossEntries, ok := conjMap["gloss"].([]interface{}); ok {
+						for _, g := range glossEntries {
+							if glossMap, ok := g.(map[string]interface{}); ok {
+								gloss := Gloss{}
+
+								if pos, ok := glossMap["pos"].(string); ok {
+									gloss.Pos = pos
+								}
+								if glossText, ok := glossMap["gloss"].(string); ok {
+									gloss.Gloss = glossText
+								}
+								if info, ok := glossMap["info"].(string); ok {
+									gloss.Info = info
+								}
+
+								conj.Gloss = append(conj.Gloss, gloss)
+							}
+						}
+					}
+
+					token.Conj = append(token.Conj, conj)
+				}
+			}
+		}
+
+		// Extract kanji-kana mapping information if available
+		if matchData, ok := wordData["match"].([]interface{}); ok {
+			var readings []KanjiReading
+
+			for _, m := range matchData {
+				if matchMap, ok := m.(map[string]interface{}); ok {
+					reading := KanjiReading{}
+
+					if kanji, ok := matchMap["kanji"].(string); ok {
+						reading.Kanji = kanji
+					}
+					if kana, ok := matchMap["reading"].(string); ok {
+						reading.Reading = kana
+					}
+					if readingType, ok := matchMap["type"].(string); ok {
+						reading.Type = readingType
+					}
+					if link, ok := matchMap["link"].(bool); ok {
+						reading.Link = link
+					}
+					if gem, ok := matchMap["geminated"].(string); ok {
+						reading.Geminated = gem
+					}
+					if stats, ok := matchMap["stats"].(bool); ok {
+						reading.Stats = stats
+					}
+					if sample, ok := matchMap["sample"].(float64); ok {
+						reading.Sample = int(sample)
+					}
+					if total, ok := matchMap["total"].(float64); ok {
+						reading.Total = int(total)
+					}
+					if perc, ok := matchMap["perc"].(string); ok {
+						reading.Perc = perc
+					}
+					if grade, ok := matchMap["grade"].(float64); ok {
+						reading.Grade = int(grade)
+					}
+
+					readings = append(readings, reading)
+				} else if text, ok := matchMap["text"].(string); ok {
+					// This is likely a full text segment, not a kanji reading
+					// We can create a special entry if needed
+					_ = text // Currently not used
+				}
+			}
+
+			// Decode Unicode escapes in the readings
+			for i := range readings {
+				readings[i].Kanji, _ = unescapeUnicodeString(readings[i].Kanji)
+				readings[i].Reading, _ = unescapeUnicodeString(readings[i].Reading)
+			}
+			token.KanjiReadings = readings
+		}
+
+		// Extract components data if available (for compound words)
+		if componentsData, ok := wordData["components"].([]interface{}); ok {
+			for _, comp := range componentsData {
+				if compMap, ok := comp.(map[string]interface{}); ok {
+					component := JSONToken{}
+
+					if text, ok := compMap["text"].(string); ok {
+						component.Surface = text
+					}
+					if kana, ok := compMap["kana"].(string); ok {
+						component.Kana = kana
+					}
+					if reading, ok := compMap["reading"].(string); ok {
+						component.Reading = reading
+					}
+					if score, ok := compMap["score"].(float64); ok {
+						component.Score = int(score)
+					}
+
+					// Extract gloss for the component
+					if glossData, ok := compMap["gloss"].(map[string]interface{}); ok {
+						if glossEntries, ok := glossData["gloss"].([]interface{}); ok {
+							for _, g := range glossEntries {
+								if glossMap, ok := g.(map[string]interface{}); ok {
+									gloss := Gloss{}
+
+									if pos, ok := glossMap["pos"].(string); ok {
+										gloss.Pos = pos
+									}
+									if glossText, ok := glossMap["gloss"].(string); ok {
+										gloss.Gloss = glossText
+									}
+									if info, ok := glossMap["info"].(string); ok {
+										gloss.Info = info
+									}
+
+									component.Gloss = append(component.Gloss, gloss)
+								}
+							}
+						}
+					}
+
+					token.Components = append(token.Components, component)
+				}
+			}
+		}
+
+		// Decode Unicode escapes in strings
+		if err := decodeToken(token); err != nil {
+			return nil, fmt.Errorf("failed to decode token: %w", err)
+		}
+
+		tokens = append(tokens, token)
+	}
+
+	return &tokens, nil
+}
+
+// extractWordsArray traverses the JSON structure to find all words and punctuation
+func extractWordsArray(data interface{}) ([]interface{}, error) {
+	// First level is typically an array
+	outerArray, ok := data.([]interface{})
+	if !ok || len(outerArray) == 0 {
+		return nil, fmt.Errorf("expected outer array structure")
+	}
+
+	// We'll collect all entries (words and punctuation) here
+	var allEntries []interface{}
+
+	// Process the top-level array which contains a mix of nested word arrays and punctuation strings
+	for _, item := range outerArray {
+		// Check if this is a string (punctuation)
+		if punctStr, isPunct := item.(string); isPunct && strings.TrimSpace(punctStr) != "" {
+			// Create a token for punctuation
+			punctToken := []interface{}{
+				punctStr, // First element is the punctuation mark itself
+				map[string]interface{}{ // Second element is token metadata
+					"type":    "PUNCT",
+					"text":    punctStr,
+					"kana":    punctStr,
+					"reading": punctStr,
+				},
+				[]interface{}{}, // Third element (usually alternative forms) is empty
+			}
+			allEntries = append(allEntries, punctToken)
+			continue
+		}
+
+		// If not a punctuation string, it should be a nested array containing word data
+		nestedArray, isArray := item.([]interface{})
+		if !isArray {
+			// Skip anything that's not a string or array
+			continue
+		}
+
+		// Extract all word entries from this nested array
+		wordEntries := extractAllWordEntries(nestedArray)
+		if len(wordEntries) > 0 {
+			allEntries = append(allEntries, wordEntries...)
+			continue
+		}
+
+		// If we couldn't extract using recursive search, check if this already is a formatted word entry
+		if isFormattedWordEntry(nestedArray) {
+			allEntries = append(allEntries, nestedArray)
+			continue
+		}
+	}
+
+	if len(allEntries) == 0 {
+		return nil, fmt.Errorf("could not find any tokens in the JSON structure")
+	}
+
+	Logger.Debug().Msgf("Found %d total entries (words and punctuation)", len(allEntries))
+	return allEntries, nil
+}
+
+// extractAllWordEntries finds all word entries in a nested array structure recursively
+func extractAllWordEntries(arr []interface{}) []interface{} {
+	var entries []interface{}
+
+	// Base case: Check if current array is a word entry
+	if isFormattedWordEntry(arr) {
+		return []interface{}{arr}
+	}
+
+	// Recursively check each element in the array
+	for _, item := range arr {
+		// If item is an array, process it
+		if nestedArr, isArray := item.([]interface{}); isArray {
+			// Try to find word entries at this level
+			wordEntries := extractAllWordEntries(nestedArr)
+			if len(wordEntries) > 0 {
+				entries = append(entries, wordEntries...)
+			}
+		}
+	}
+
+	return entries
+}
+
+// extractWordEntry tries to extract a single word entry from a nested array structure
+// typically in the format [[[[["romaji", {word data}, []]], score]]]
+func extractWordEntry(arr []interface{}) []interface{} {
+	// Common pattern of nesting for word entries
+	if len(arr) == 0 {
+		return nil
+	}
+
+	// Navigate through the nested structure
+	current := arr
+	for len(current) > 0 {
+		// Check if current is a valid word entry format
+		if isFormattedWordEntry(current) {
+			return current
+		}
+
+		// Go one level deeper
+		nextArr, ok := current[0].([]interface{})
+		if !ok {
+			break
+		}
+		current = nextArr
+	}
+
+	return nil
+}
+
+// isFormattedWordEntry checks if an array matches the expected format for a word entry
+// Word entries have the format ["romaji", {word data}, []]
+func isFormattedWordEntry(arr []interface{}) bool {
+	if len(arr) < 2 {
+		return false
+	}
+
+	// First element should be a string (romaji)
+	_, isString := arr[0].(string)
+	if !isString {
+		return false
+	}
+
+	// Second element should be a map (word data)
+	_, isMap := arr[1].(map[string]interface{})
+	if !isMap {
+		return false
+	}
+
+	return true
+}
 
 func placeholder() {
+	fmt.Print("")
 	pretty.Pretty([]byte{})
 	color.Redln(" 𝒻*** 𝓎ℴ𝓊 𝒸ℴ𝓂𝓅𝒾𝓁ℯ𝓇")
 	pp.Println("𝓯*** 𝔂𝓸𝓾 𝓬𝓸𝓶𝓹𝓲𝓵𝓮𝓻")

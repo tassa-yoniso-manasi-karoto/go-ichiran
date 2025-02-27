@@ -2,8 +2,6 @@
 package ichiran
 
 import (
-	"context"
-	"encoding/json"
 	"encoding/csv"
 	"fmt"
 	"os"
@@ -14,16 +12,18 @@ import (
 	"github.com/gookit/color"
 	"github.com/k0kubun/pp"
 	"github.com/tidwall/pretty"
-
-	"github.com/docker/docker/api/types"
 )
+
+// KanjiFrequencyMap maps kanji characters to their frequency rank
+type KanjiFrequencyMap map[string]int
 
 
 
 func main() {
 	freqMap, err := LoadKanjiFrequencyData("heisig-kanjis.csv")
 	if err != nil {
-		return nil, fmt.Errorf("failed to load kanji frequency data: %w", err)
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		return
 	}
 	// Step 1: Find the maximum index in the map
 	maxIndex := -1

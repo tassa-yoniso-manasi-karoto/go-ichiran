@@ -1,182 +1,29 @@
-
 package ichiran
 
 import (
-	"context"
-	"encoding/json"
 	"fmt"
-	"strings"
+	"regexp"
 	"slices"
+	"strings"
 	"unicode"
 
 	"github.com/gookit/color"
 	"github.com/k0kubun/pp"
 	"github.com/tidwall/pretty"
-
-	"github.com/docker/docker/api/types"
 )
-
-// KanjiReading represents the reading information for a single kanji character
-type KanjiReading struct {
-	Kanji     string `json:"kanji"`     // The kanji character
-	Reading   string `json:"reading"`    // The reading in hiragana
-	Type      string `json:"type"`       // Reading type (ja_on, ja_kun)
-	Link      bool   `json:"link"`       // Whether the reading links to adjacent characters
-	Geminated string `json:"geminated"`  // Geminated sound (っ) if present
-	Stats     bool   `json:"stats"`      // Whether statistics are available
-	Sample    int    `json:"sample"`     // Sample size for statistics
-	Total     int    `json:"total"`      // Total occurrences
-	Perc      string `json:"perc"`       // Percentage of usage
-	Grade     int    `json:"grade"`      // School grade level
-}
-
-// TextSegment represents non-kanji text segments in the analysis
-type TextSegment struct {
-	Text string `json:"text"` // The text content
-}
-
-// kanjiReadingResult is a union type that can hold either a KanjiReading or a TextSegment
-type kanjiReadingResult struct {
-	*KanjiReading
-	*TextSegment
-}
-
-// getKanjiReadings performs analysis to get readings for individual kanji characters
-func getKanjiReadings(text string) ([]kanjiReadingResult, error) {
-	// First get the kana reading using existing Analyze function
-	tokens, err := Analyze(text)
-	if err != nil {
-		return nil, fmt.Errorf("failed to analyze text: %w", err)
-	}
-
-	// Get the kana reading
-	kanaReading := tokens.Kana()
-	
-	// Kana may have space in them with causes the match reading command below to fail:
-	// 	Surface:     "だから",
-	// 	IsLexical:   true,
-	//	Reading:     "だから",
-	//	Kana:        "だ から",
-	// 	Romaji:      "da kara",
-	kanaReading = strings.ReplaceAll(kanaReading, " ", "")
-
-	ctx, cancel := context.WithTimeout(Ctx, QueryTimeout)
-	defer cancel()
-
-	mu.Lock()
-	docker := instance
-	mu.Unlock()
-
-	if docker == nil {
-		return nil, fmt.Errorf("Docker manager not initialized. Call Init() first")
-	}
-
-	// Get Docker client
-	client, err := docker.docker.GetClient()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get Docker client: %w", err)
-	}
-
-	// Prepare command for kanji readings
-	cmd := []string{
-		"bash",
-		"-c",
-		fmt.Sprintf("ichiran-cli -e '(jsown:to-json (ichiran/kanji:match-readings-json \"%s\" \"%s\"))'",
-			text, kanaReading),
-	}
-
-	// Create execution config
-	execConfig := types.ExecConfig{
-		Cmd:          cmd,
-		AttachStdout: true,
-		AttachStderr: true,
-	}
-
-	// Create and start execution
-	exec, err := client.ContainerExecCreate(ctx, ContainerName, execConfig)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create exec: %w", err)
-	}
-
-	resp, err := client.ContainerExecAttach(ctx, exec.ID, types.ExecStartCheck{})
-	if err != nil {
-		return nil, fmt.Errorf("failed to attach to exec: %w", err)
-	}
-	defer resp.Close()
-
-	// Read output
-	output, err := readDockerOutput(resp.Reader)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read exec output: %w", err)
-	}
-	
-	
-	// First unescape the JSON string
-	var jsonStr string
-	if err := json.Unmarshal(output, &jsonStr); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal outer JSON string: %w", err)
-	}
-
-	// Now parse the actual results
-	var results []kanjiReadingResult
-	if err := json.Unmarshal([]byte(jsonStr), &results); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal kanji readings: %w\nJSON: %s", err, jsonStr)
-	}
-	//color.Redf("len(output)=%d\tjsonStr=\"%s\"\n", len(output), jsonStr)
-
-	// Process the results to handle Unicode escapes
-	for i := range results {
-		if results[i].KanjiReading != nil {
-			results[i].KanjiReading.Kanji, err = unescapeUnicodeString(results[i].KanjiReading.Kanji)
-			if err != nil {
-				return nil, fmt.Errorf("failed to unescape kanji: %w", err)
-			}
-			results[i].KanjiReading.Reading, err = unescapeUnicodeString(results[i].KanjiReading.Reading)
-			if err != nil {
-				return nil, fmt.Errorf("failed to unescape reading: %w", err)
-			}
-		}
-		if results[i].TextSegment != nil {
-			results[i].TextSegment.Text, err = unescapeUnicodeString(results[i].TextSegment.Text)
-			if err != nil {
-				return nil, fmt.Errorf("failed to unescape text segment: %w", err)
-			}
-		}
-	}
-
-	return results, nil
-}
-
-
-
-
-
 
 type ProcessingStatus int
 
 const (
-	StatusPreserved ProcessingStatus = iota      // Kanji was preserved (regular reading & under frequency threshold)
-	StatusIrregular                              // Kanji was transliterated due to irregular reading
-	StatusInfrequent                             // Kanji was transliterated due to being over frequency threshold
-	StatusUnmappable                             // Kanji was transliterated due to inability to map reading
-	StatusNotKanji                               // Token was not a kanji character
+	StatusPreserved  ProcessingStatus = iota // Kanji was preserved (regular reading & under frequency threshold)
+	StatusIrregular                          // Kanji was transliterated due to irregular reading
+	StatusInfrequent                         // Kanji was transliterated due to being over frequency threshold
+	StatusUnmappable                         // Kanji was transliterated due to inability to map reading
+	StatusNotKanji                           // Token was not a kanji character
 )
 
-// ProcessedToken represents a single token's processing result
-type ProcessedToken struct {
-	Original string
-	Result   string
-	Status   ProcessingStatus
-}
-
-// TransliterationResult contains the complete transliteration output
-type TransliterationResult struct {
-	Text    string           // The final transliterated text
-	Tokens  []ProcessedToken // Detailed processing information
-}
-
 // isRegularReading checks if the kanji has a regular reading pattern
-func isRegularReading(reading *KanjiReading) bool {
+func isRegularReading(reading KanjiReading) bool {
 	// A reading is considered regular if:
 	// 1. It has a direct link between kanji and reading (link=true)
 	// 2. It doesn't have special modifications (geminated is empty)
@@ -187,6 +34,7 @@ func isRegularReading(reading *KanjiReading) bool {
 // It preserves kanji that are both:
 //   - Below the specified frequency threshold (lower number = more frequent)
 //   - Have regular readings (no special phonetic modifications)
+//
 // Other kanji are converted to their hiragana readings.
 //
 // Parameter freqThreshold: Maximum frequency rank to preserve (1-3000, lower = more frequent)
@@ -200,87 +48,128 @@ func (tokens JSONTokens) SelectiveTranslitFullMapping(freqThreshold int) (*Trans
 }
 
 func (tokens JSONTokens) selectiveTranslit(freqThreshold int) (*TransliterationResult, error) {
-	// Reconstruct the original text from the tokens
-	var originalText strings.Builder
-	for _, t := range tokens {
-		originalText.WriteString(t.Surface)
-	}
-	text := originalText.String()
-
-	// Split text into processable and non-processable chunks
-	chunks := splitIntoChunks(text)
-
 	var allProcessedTokens []ProcessedToken
 	var finalResult strings.Builder
 
-	// Process each chunk
-	for _, chunk := range chunks {
-		if !chunk.processable || !ContainsKanjis(chunk.text) {
-				// Preserve non-processable chunks as-is
-				token := ProcessedToken{
-					Original: chunk.text,
-					Result:   chunk.text,
-					Status:   StatusNotKanji,
-				}
-				finalResult.WriteString(chunk.text)
-				allProcessedTokens = append(allProcessedTokens, token)
-				continue
-		}
-
-		// Process Japanese text chunks
-		readings, err := getKanjiReadings(chunk.text)
-		if err != nil {
-			// If processing fails, preserve the chunk as-is
-			token := ProcessedToken{
-				Original: chunk.text,
-				Result:   chunk.text,
+	// Process each token
+	for _, token := range tokens {
+		if !token.IsLexical || !ContainsKanjis(token.Surface) {
+			// Preserve non-processable tokens as-is
+			processedToken := ProcessedToken{
+				Original: token.Surface,
+				Result:   token.Surface,
 				Status:   StatusNotKanji,
 			}
-			finalResult.WriteString(chunk.text)
-			allProcessedTokens = append(allProcessedTokens, token)
+			finalResult.WriteString(token.Surface)
+			allProcessedTokens = append(allProcessedTokens, processedToken)
 			continue
 		}
 
-		// Process the readings
+		// Use the already parsed kanji readings from the token
+		readings := token.KanjiReadings
+		if len(readings) == 0 {
+			// If no readings available, preserve the token as-is
+			processedToken := ProcessedToken{
+				Original: token.Surface,
+				Result:   token.Surface,
+				Status:   StatusUnmappable,
+			}
+			finalResult.WriteString(token.Surface)
+			allProcessedTokens = append(allProcessedTokens, processedToken)
+			continue
+		}
+
+		// Process each kanji reading
+		var tokenResult strings.Builder
 		for _, r := range readings {
-			if r.KanjiReading != nil {
-				kanji := r.KanjiReading.Kanji
-				freq := slices.Index(kanjiFreqSlice, kanji)
-				exists := freq != -1
+			// Check if this is a multi-character kanji reading (a compound)
+			if len(r.Kanji) > 1 {
+				// For compound kanji like "一二", process each individual kanji
+				allPreserved := true
+				individualResults := make([]string, 0, len(r.Kanji))
 
-				var token ProcessedToken
-				token.Original = kanji
+				// Process each individual kanji in the compound
+				for _, runeValue := range r.Kanji {
+					singleKanji := string(runeValue)
+					freq := slices.Index(kanjiFreqSlice, singleKanji)
+					exists := freq > -1
+					if exists {
+						freq += 1 // Convert 0-based index to 1-based frequency rank
+					}
 
-				shouldPreserve := exists &&
-					freq <= freqThreshold &&
-					isRegularReading(r.KanjiReading)
-
-				if shouldPreserve {
-					token.Result = kanji
-					token.Status = StatusPreserved
-				} else {
-					token.Result = r.KanjiReading.Reading
-					if !exists || freq > freqThreshold {
-						token.Status = StatusInfrequent
-					} else if !isRegularReading(r.KanjiReading) {
-						token.Status = StatusIrregular
+					// Check if this individual kanji should be preserved
+					shouldPreserveKanji := exists && freq > 0 && freq <= freqThreshold
+					if shouldPreserveKanji {
+						individualResults = append(individualResults, singleKanji)
 					} else {
-						token.Status = StatusUnmappable
+						// If even one kanji in the compound doesn't meet the criteria,
+						// we'll use the kana reading for the whole compound
+						allPreserved = false
+						break
 					}
 				}
 
-				finalResult.WriteString(token.Result)
-				allProcessedTokens = append(allProcessedTokens, token)
+				var processedToken ProcessedToken
+				processedToken.Original = r.Kanji
 
-			} else if r.TextSegment != nil {
-				token := ProcessedToken{
-					Original: r.TextSegment.Text,
-					Result:   r.TextSegment.Text,
-					Status:   StatusNotKanji,
+				if allPreserved {
+					// All individual kanji should be preserved, join them back together
+					preservedCompound := strings.Join(individualResults, "")
+					processedToken.Result = preservedCompound
+					processedToken.Status = StatusPreserved
+				} else {
+					// Some kanji couldn't be preserved, use the kana reading for the whole compound
+					processedToken.Result = r.Reading
+					processedToken.Status = StatusInfrequent
 				}
-				finalResult.WriteString(token.Result)
-				allProcessedTokens = append(allProcessedTokens, token)
+
+				tokenResult.WriteString(processedToken.Result)
+				allProcessedTokens = append(allProcessedTokens, processedToken)
+
+			} else {
+				// Normal single kanji processing
+				exists := false
+
+				kanji := r.Kanji
+				freq := slices.Index(kanjiFreqSlice, kanji)
+				if freq > -1 {
+					freq += 1 // Convert 0-based index to 1-based frequency rank
+					exists = true
+				}
+
+				var processedToken ProcessedToken
+				processedToken.Original = kanji
+
+				isRegular := isRegularReading(r)
+
+				shouldPreserve := exists &&
+					freq > 0 && freq <= freqThreshold &&
+					isRegular
+
+				if shouldPreserve {
+					processedToken.Result = kanji
+					processedToken.Status = StatusPreserved
+				} else {
+					processedToken.Result = r.Reading
+					if !exists || freq > freqThreshold {
+						processedToken.Status = StatusInfrequent
+					} else if !isRegularReading(r) {
+						processedToken.Status = StatusIrregular
+					} else {
+						processedToken.Status = StatusUnmappable
+					}
+				}
+
+				tokenResult.WriteString(processedToken.Result)
+				allProcessedTokens = append(allProcessedTokens, processedToken)
 			}
+		}
+
+		// If we couldn't process the token properly, use the kana reading
+		if tokenResult.Len() == 0 {
+			finalResult.WriteString(token.Kana)
+		} else {
+			finalResult.WriteString(tokenResult.String())
 		}
 	}
 
@@ -290,64 +179,7 @@ func (tokens JSONTokens) selectiveTranslit(freqThreshold int) (*TransliterationR
 	}, nil
 }
 
-// splitIntoChunks splits text into alternating chunks of processable (Japanese) and
-// non-processable (punctuation, etc.) text, preserving their order
-func splitIntoChunks(text string) []struct {
-	text        string
-	processable bool
-} {
-	var chunks []struct {
-		text        string
-		processable bool
-	}
-	var currentJapanese strings.Builder
-	var currentOther strings.Builder
-
-	flushJapanese := func() {
-		if currentJapanese.Len() > 0 {
-			chunks = append(chunks, struct {
-				text        string
-				processable bool
-			}{
-				text:        currentJapanese.String(),
-				processable: true,
-			})
-			currentJapanese.Reset()
-		}
-	}
-
-	flushOther := func() {
-		if currentOther.Len() > 0 {
-			chunks = append(chunks, struct {
-				text        string
-				processable bool
-			}{
-				text:        currentOther.String(),
-				processable: false,
-			})
-			currentOther.Reset()
-		}
-	}
-
-	for _, r := range text {
-		if unicode.Is(unicode.Han, r) || // Kanji
-			unicode.Is(unicode.Hiragana, r) ||
-			unicode.Is(unicode.Katakana, r) {
-			flushOther()
-			currentJapanese.WriteRune(r)
-		} else {
-			flushJapanese()
-			currentOther.WriteRune(r)
-		}
-	}
-
-	// Flush any remaining content
-	flushJapanese()
-	flushOther()
-
-	return chunks
-}
-
+// ContainsKanjis checks if a string contains any kanji characters
 func ContainsKanjis(s string) bool {
 	for _, r := range s {
 		if unicode.Is(unicode.Han, r) {
@@ -356,7 +188,6 @@ func ContainsKanjis(s string) bool {
 	}
 	return false
 }
-
 
 // String provides human-readable status descriptions
 func (s ProcessingStatus) String() string {
@@ -369,10 +200,28 @@ func (s ProcessingStatus) String() string {
 	}[s]
 }
 
+// cleanLispCode removes Lisp comments and cleans up the code for better shell execution
+func cleanLispCode(code string) string {
+	// Regular expression to match Lisp comments (semicolon to end of line)
+	reComments := regexp.MustCompile(`;+[^\n]*`)
 
-// Helper function to print detailed processing information
+	// Remove all comments
+	code = reComments.ReplaceAllString(code, "")
+
+	// Normalize whitespace
+	code = strings.ReplaceAll(code, "\n", " ")
+	code = strings.ReplaceAll(code, "\t", " ")
+
+	// Multiple consecutive spaces to a single space
+	reSpaces := regexp.MustCompile(`\s{2,}`)
+	code = reSpaces.ReplaceAllString(code, " ")
+
+	return code
+}
+
+// PrintProcessingDetails prints a human-readable report of the transliteration process
 func PrintProcessingDetails(result *TransliterationResult) {
-	fmt.Printf("Final text:%s\n\n", result.Text)
+	fmt.Printf("Final text: %s\n\n", result.Text)
 	fmt.Println("Processing details:")
 	for _, token := range result.Tokens {
 		fmt.Printf("\tOriginal: %s\n", token.Original)
@@ -382,13 +231,9 @@ func PrintProcessingDetails(result *TransliterationResult) {
 	}
 }
 
-
-
-
-func placeholder3456() {
-	fmt.Println("")
+func placeholder433() {
+	fmt.Print("")
 	pretty.Pretty([]byte{})
 	color.Redln(" 𝒻*** 𝓎ℴ𝓊 𝒸ℴ𝓂𝓅𝒾𝓁ℯ𝓇")
 	pp.Println("𝓯*** 𝔂𝓸𝓾 𝓬𝓸𝓶𝓹𝓲𝓵𝓮𝓻")
 }
-

@@ -1,7 +1,6 @@
-
 package ichiran
 
-// adapted from https://github.com/sdcr/heisig-kanjis which is suppose to come
+// adapted from https://github.com/sdcr/heisig-kanjis which is supposed to come
 // from 6th ed of Remembering the Kanji by James W. Heisig
 var kanjiFreqSlice = []string{
 	"一",
