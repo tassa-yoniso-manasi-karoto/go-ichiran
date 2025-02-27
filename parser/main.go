@@ -1,13 +1,12 @@
-
 package ichiran
 
 import (
 	"encoding/csv"
 	"fmt"
-	"os"
 	"io"
-	"strings"
+	"os"
 	"strconv"
+	"strings"
 
 	"github.com/gookit/color"
 	"github.com/k0kubun/pp"
@@ -16,8 +15,6 @@ import (
 
 // KanjiFrequencyMap maps kanji characters to their frequency rank
 type KanjiFrequencyMap map[string]int
-
-
 
 func main() {
 	freqMap, err := LoadKanjiFrequencyData("heisig-kanjis.csv")
@@ -43,7 +40,6 @@ func main() {
 	pp.BufferFoldThreshold = 100000
 	pp.Println(result)
 }
-
 
 // LoadKanjiFrequencyData loads kanji frequency data from a CSV file
 func LoadKanjiFrequencyData(csvPath string) (KanjiFrequencyMap, error) {
@@ -72,7 +68,7 @@ func LoadKanjiFrequencyData(csvPath string) (KanjiFrequencyMap, error) {
 		// Parse readings (columns 6 and 7 in the CSV)
 		onReadings := strings.Split(strings.TrimSpace(record[6]), ";")
 		kunReadings := strings.Split(strings.TrimSpace(record[7]), ";")
-		
+
 		// Combine all readings
 		var readings []string
 		readings = append(readings, onReadings...)
@@ -86,14 +82,12 @@ func LoadKanjiFrequencyData(csvPath string) (KanjiFrequencyMap, error) {
 		if err != nil {
 			continue
 		}
-		
+
 		freqMap[record[0]] = rank
 	}
 
 	return freqMap, nil
 }
-
-
 
 func placeholder3456() {
 	fmt.Println("")
@@ -101,4 +95,3 @@ func placeholder3456() {
 	color.Redln(" 𝒻*** 𝓎ℴ𝓊 𝒸ℴ𝓂𝓅𝒾𝓁ℯ𝓇")
 	pp.Println("𝓯*** 𝔂𝓸𝓾 𝓬𝓸𝓶𝓹𝓲𝓵𝓮𝓻")
 }
-
