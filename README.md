@@ -22,26 +22,26 @@ go get github.com/tassa-yoniso-manasi-karoto/go-ichiran
 
 ```go
 func main() {
-	// Initialize the environment (downloads, builds and starts containers if they are not running)
+	// Initialize the environment (downloads, builds and starts containers)
 	ichiran.MustInit()
 	defer ichiran.Close()
 
-	tokens, err := ichiran.Analyze("私は日本語を勉強しています。")
-	if err != nil {
-		panic(err)
-	}
-	tlit, err := tokens.SelectiveTranslit(1000) // most frequent 1000 Kanjis only
-	if err != nil {
-		panic(err)
-	}
-
+	tokens, err := ichiran.Analyze("私は日本語を勉強しています")
+	check(err)
+	
+	// Selective transliteration: preserve only the top 1000 most frequent kanji.
+	tlit, err := tokens.SelectiveTranslit(1000)
+	check(err)
+	
 	fmt.Printf("Tokenized: %#v\n",		tokens.Tokenized())
-	fmt.Printf("TokenizedParts: %#v\n",	tokens.TokenizedParts())
+	fmt.Printf("TokenizedParts: %#v\n\n",	tokens.TokenizedParts())
 	fmt.Printf("Kana: %#v\n",		tokens.Kana())
-	fmt.Printf("KanaParts: %#v\n",		tokens.KanaParts())
-	fmt.Printf("SelectiveTranslit: %#v\n",	tlit)
+	fmt.Printf("KanaParts: %#v\n\n",	tokens.KanaParts())
 	fmt.Printf("Roman: %#v\n",		tokens.Roman())
-	fmt.Printf("RomanParts: %#v\n",		tokens.RomanParts())
+	fmt.Printf("RomanParts: %#v\n\n",	tokens.RomanParts())
+	
+	fmt.Printf("SelectiveTranslit: %#v\n\n",	tlit)
+	
 	fmt.Printf("GlossParts: %#v\n",		tokens.GlossParts())
 }
 ```
@@ -49,26 +49,33 @@ func main() {
 ### Output
 
 ```
-Tokenized: "私 は 日本語 を 勉強しています . "
-TokenizedParts: []string{"私", "は", "日本語", "を", "勉強しています", ". "}
-Kana: "わたし は にほんご を べんきょう しています . "
-KanaParts: []string{"わたし", "は", "にほんご", "を", "べんきょう しています", ". "}
-SelectiveTranslit: "私は日本語を べんきょう しています. "
-Roman: "watashi wa nihongo wo benkyō shiteimasu . "
-RomanParts: []string{"watashi", "wa", "nihongo", "wo", "benkyō shiteimasu", ". "}
+Tokenized:	"私 は 日本語 を 勉強しています"
+TokenizedParts:		[]string{"私", "は", "日本語", "を", "勉強しています"}
+
+Kana:		"わたし は にほんご を べんきょう しています"
+KanaParts:		[]string{"わたし", "は", "にほんご", "を", "べんきょう しています"}
+
+Roman:		"watashi wa nihongo wo benkyō shiteimasu"
+RomanParts:		[]string{"watashi", "wa", "nihongo", "wo", "benkyō shiteimasu"}
+
+SelectiveTranslit: "私は日本語をべんきょう"
+
 GlossParts: []string{"私(I; me)",
 	"は (indicates sentence topic; indicates contrast with another option (stated or unstated); adds emphasis)",
 	"日本語 (Japanese (language))",
 	"を (indicates direct object of action; indicates subject of causative expression; indicates an area traversed; indicates time (period) over which action takes place; indicates point of departure or separation of action; indicates object of desire, like, hate, etc.)",
 	"勉強 (study; diligence; working hard; experience; lesson (for the future); discount; price reduction)",
 	"して (to do; to carry out; to perform; to cause to become; to make (into); to turn (into); to serve as; to act as; to work as; to wear (clothes, a facial expression, etc.); to judge as being; to view as being; to think of as; to treat as; to use as; to decide on; to choose; to be sensed (of a smell, noise, etc.); to be (in a state, condition, etc.); to be worth; to cost; to pass (of time); to elapse; to place, or raise, person A to a post or status B; to transform A to B; to make A into B; to exchange A for B; to make use of A for B; to view A as B; to handle A as if it were B; to feel A about B; verbalizing suffix (applies to nouns noted in this dictionary with the part of speech \"vs\"); creates a humble verb (after a noun prefixed with \"o\" or \"go\"); to be just about to; to be just starting to; to try to; to attempt to)",
-	"います (to be (of animate objects); to exist; to stay; to be ...-ing; to have been ...-ing)",
-	". "}
+	"います (to be (of animate objects); to exist; to stay; to be ...-ing; to have been ...-ing)"}
 ```
+
 
 
 > [!TIP]
 > if you have 'exec: "ichiran-cli": executable file not found' errors, remove directory ./docker/pgdata (as recommended by README of ichiran repo) at location below and use docker.InitForce() to bypass cache and force rebuild from scratch.
+
+> [!NOTE]
+> Because ichiran doesn't retain spaces during its tokenization, the methods Roman, Kana, Tokenized are simply wrappers around RomanParts, KanaParts, TokenizedParts that joins their parts indiscriminately with a space.<br> For a more robust implementation that worksaround this limitation, use go-ichiran through [translitkit](https://github.com/tassa-yoniso-manasi-karoto/translitkit).
 
 ## Docker compose containers' location
 
