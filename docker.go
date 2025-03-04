@@ -10,7 +10,8 @@ import (
 	"io"
 	"sync"
 	"time"
-
+	"regexp"
+	
 	"github.com/gookit/color"
 	"github.com/k0kubun/pp"
 	"github.com/rs/zerolog"
@@ -29,8 +30,9 @@ https://pkg.go.dev/github.com/docker/cli@v27.4.1+incompatible/cli/flags
 const (
 	remote        = "https://github.com/tshatrov/ichiran.git"
 	projectName   = "ichiran"
-	containerName = "ichiran-main-1"
+	ContainerName = "ichiran-main-1"
 )
+
 
 var (
 	instance       *docker
@@ -39,6 +41,11 @@ var (
 	Ctx            = context.Background()
 	QueryTimeout   = 45 * time.Minute
 	DockerLogLevel = zerolog.TraceLevel
+	
+	reMultipleSpacesSeq = regexp.MustCompile(`\s{2,}`)
+	Logger              = zerolog.Nop()
+	// Logger = zerolog.New(zerolog.ConsoleWriter{Out: os.Stderr, TimeFormat: time.TimeOnly}).With().Timestamp().Logger()
+	errNoJSONFound = fmt.Errorf("no valid JSON line found in output")
 )
 
 type docker struct {

@@ -5,23 +5,10 @@ package ichiran
 
 import (
 	"fmt"
-	"regexp"
 	"strings"
 
 	"github.com/gookit/color"
 	"github.com/k0kubun/pp"
-	"github.com/rs/zerolog"
-)
-
-const (
-	ContainerName = "ichiran-main-1"
-)
-
-var (
-	reMultipleSpacesSeq = regexp.MustCompile(`\s{2,}`)
-	Logger              = zerolog.Nop()
-	// Logger = zerolog.New(zerolog.ConsoleWriter{Out: os.Stderr, TimeFormat: time.TimeOnly}).With().Timestamp().Logger()
-	errNoJSONFound = fmt.Errorf("no valid JSON line found in output")
 )
 
 // TokenizedStr returns a string of all tokens separated by spaces or commas.

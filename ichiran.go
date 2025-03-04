@@ -86,7 +86,7 @@ func Analyze(text string) (*JSONTokens, error) {
 	}
 
 	// Print the command for debugging
-	fmt.Printf("EXECUTING DOCKER COMMAND:\n%s\n", execCommand)
+	//fmt.Printf("EXECUTING DOCKER COMMAND:\n%s\n", execCommand)
 
 	// Create execution config
 	execConfig := types.ExecConfig{
