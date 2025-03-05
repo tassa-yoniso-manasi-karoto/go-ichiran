@@ -16,8 +16,7 @@ func (tokens JSONTokens) Tokenized() string {
 	parts := tokens.TokenizedParts()
 	// Debug the token parts to see what we got
 	Logger.Debug().Msgf("Tokenized parts: %v", parts)
-	s := strings.Join(parts, " ")
-	return reMultipleSpacesSeq.ReplaceAllString(s, ", ")
+	return strings.Join(parts, " ")
 }
 
 // TokenizedParts returns a slice of all token surfaces.
@@ -39,8 +38,7 @@ func (tokens JSONTokens) TokenizedParts() (parts []string) {
 // Kana returns a string of all tokens in kana form where available.
 func (tokens JSONTokens) Kana() string {
 	parts := tokens.KanaParts()
-	s := strings.Join(parts, "")
-	return reMultipleSpacesSeq.ReplaceAllString(s, ", ")
+	return strings.Join(parts, "")
 }
 
 // KanaParts returns a slice of all tokens in kana form where available.
@@ -58,8 +56,7 @@ func (tokens JSONTokens) KanaParts() (parts []string) {
 // Roman returns a string of all tokens in romanized form.
 func (tokens JSONTokens) Roman() string {
 	parts := tokens.RomanParts()
-	s := strings.Join(parts, " ")
-	return reMultipleSpacesSeq.ReplaceAllString(s, ", ")
+	return strings.Join(parts, " ")
 }
 
 // RomanParts returns a slice of all tokens in romanized form.
