@@ -10,6 +10,7 @@ import (
 	"io"
 	"sync"
 	"time"
+	"strings"
 	"regexp"
 	
 	"github.com/gookit/color"
@@ -206,6 +207,14 @@ func extractJSONFromDockerOutput(reader io.Reader) ([]byte, error) {
 	// Print raw output for debugging
 	//color.Redln("RAW ICHIRAN-CLI OUTPUT:")
 	//fmt.Println(string(rawOutput))
+	if strings.Contains(string(rawOutput), "ichiran-cli: command not found") {
+		return []byte{}, fmt.Errorf("\"%s\": "+
+			"this error is associated with a temporary failure in " +
+			"domain resolution during container creation, "+
+			"check your network, disable any VPN and restart %s.",
+			rawOutput, dockerutil.DockerBackendName())
+	}
+	
 
 	// Use bufio.Reader so we can read arbitrarily long lines.
 	r := bufio.NewReader(bytes.NewReader(rawOutput))
