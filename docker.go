@@ -172,8 +172,8 @@ var (
 	mu sync.Mutex
 )
 
-// Init initializes the default docker service (for backward compatibility)
-func Init(ctx context.Context) error {
+// InitWithContext initializes the default docker service with a context
+func InitWithContext(ctx context.Context) error {
 	mgr, err := getOrCreateDefaultManager(ctx)
 	if err != nil {
 		return err
@@ -181,8 +181,13 @@ func Init(ctx context.Context) error {
 	return mgr.Init(ctx)
 }
 
-// InitQuiet initializes the docker service with reduced logging (for backward compatibility)
-func InitQuiet(ctx context.Context) error {
+// Init initializes the default docker service (backward compatibility)
+func Init() error {
+	return InitWithContext(context.Background())
+}
+
+// InitQuietWithContext initializes the docker service with reduced logging and a context
+func InitQuietWithContext(ctx context.Context) error {
 	mgr, err := getOrCreateDefaultManager(ctx)
 	if err != nil {
 		return err
@@ -190,8 +195,13 @@ func InitQuiet(ctx context.Context) error {
 	return mgr.InitQuiet(ctx)
 }
 
-// InitRecreate removes existing containers (for backward compatibility)
-func InitRecreate(ctx context.Context, noCache bool) error {
+// InitQuiet initializes the docker service with reduced logging (backward compatibility)
+func InitQuiet() error {
+	return InitQuietWithContext(context.Background())
+}
+
+// InitRecreateWithContext removes existing containers with a context
+func InitRecreateWithContext(ctx context.Context, noCache bool) error {
 	mgr, err := getOrCreateDefaultManager(ctx)
 	if err != nil {
 		return err
@@ -199,29 +209,49 @@ func InitRecreate(ctx context.Context, noCache bool) error {
 	return mgr.InitRecreate(ctx, noCache)
 }
 
-// MustInit initializes the docker service (for backward compatibility)
-func MustInit(ctx context.Context) {
+// InitRecreate removes existing containers (backward compatibility)
+func InitRecreate(noCache bool) error {
+	return InitRecreateWithContext(context.Background(), noCache)
+}
+
+// MustInitWithContext initializes the docker service with a context (panics on error)
+func MustInitWithContext(ctx context.Context) {
 	mgr, _ := getOrCreateDefaultManager(ctx)
 	mgr.MustInit(ctx)
 }
 
-// Stop stops the docker service (for backward compatibility)
-func Stop(ctx context.Context) error {
+// MustInit initializes the docker service (backward compatibility)
+func MustInit() {
+	MustInitWithContext(context.Background())
+}
+
+// StopWithContext stops the docker service with a context
+func StopWithContext(ctx context.Context) error {
 	if instance == nil {
 		return fmt.Errorf("docker instance not initialized")
 	}
 	return instance.Stop(ctx)
 }
 
-// Status returns the current status of the project (for backward compatibility)
-func Status(ctx context.Context) (string, error) {
+// Stop stops the docker service (backward compatibility)
+func Stop() error {
+	return StopWithContext(context.Background())
+}
+
+// StatusWithContext returns the current status of the project with a context
+func StatusWithContext(ctx context.Context) (string, error) {
 	if instance == nil {
 		return "", fmt.Errorf("docker instance not initialized")
 	}
 	return instance.Status(ctx)
 }
 
-// Close implements io.Closer (for backward compatibility)
+// Status returns the current status of the project (backward compatibility)
+func Status() (string, error) {
+	return StatusWithContext(context.Background())
+}
+
+// Close implements io.Closer (backward compatibility)
 func Close() error {
 	if instance != nil {
 		instance.logger.Close()

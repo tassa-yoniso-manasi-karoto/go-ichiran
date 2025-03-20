@@ -20,108 +20,88 @@ go get github.com/tassa-yoniso-manasi-karoto/go-ichiran
 
 ## Quick Start
 
-### Package-Level Functions (Simple Usage)
+
+## tldr
 
 ```go
-import (
-	"context"
-	"fmt"
-	"log"
-
-	"github.com/tassa-yoniso-manasi-karoto/go-ichiran"
-)
-
 func main() {
-	// Create a context
-	ctx := context.Background()
-	
 	// Initialize the environment (downloads, builds and starts containers)
-	if err := ichiran.Init(ctx); err != nil {
-		log.Fatal(err)
-	}
+	ichiran.MustInit()
 	defer ichiran.Close()
 
-	// Analyze Japanese text
-	tokens, err := ichiran.Analyze(ctx, "私は日本語を勉強しています")
-	if err != nil {
-		log.Fatal(err)
-	}
+	tokens, err := ichiran.Analyze("私は日本語を勉強しています")
+	check(err)
 	
-	// Selective transliteration: preserve only the top 1000 most frequent kanji
+	// Selective transliteration: preserve only the top 1000 most frequent kanji.
 	tlit, err := tokens.SelectiveTranslit(1000)
-	if err != nil {
-		log.Fatal(err)
-	}
+	check(err)
 	
-	fmt.Printf("Tokenized: %#v\n", tokens.Tokenized())
-	fmt.Printf("Kana: %#v\n", tokens.Kana())
-	fmt.Printf("Roman: %#v\n", tokens.Roman())
-	fmt.Printf("SelectiveTranslit: %#v\n", tlit)
+	fmt.Printf("Tokenized: %#v\n",		tokens.Tokenized())
+	fmt.Printf("TokenizedParts: %#v\n\n",	tokens.TokenizedParts())
+	fmt.Printf("Kana: %#v\n",		tokens.Kana())
+	fmt.Printf("KanaParts: %#v\n\n",	tokens.KanaParts())
+	fmt.Printf("Roman: %#v\n",		tokens.Roman())
+	fmt.Printf("RomanParts: %#v\n\n",	tokens.RomanParts())
+	
+	fmt.Printf("SelectiveTranslit: %#v\n\n",	tlit)
+	
+	fmt.Printf("GlossParts: %#v\n",		tokens.GlossParts())
 }
+```
+ 
+#### Output
+
+```
+Tokenized:	"私 は 日本語 を 勉強しています"
+TokenizedParts:		[]string{"私", "は", "日本語", "を", "勉強しています"}
+
+Kana:		"わたし は にほんご を べんきょう しています"
+KanaParts:		[]string{"わたし", "は", "にほんご", "を", "べんきょう しています"}
+
+Roman:		"watashi wa nihongo wo benkyō shiteimasu"
+RomanParts:		[]string{"watashi", "wa", "nihongo", "wo", "benkyō shiteimasu"}
+
+SelectiveTranslit: "私は日本語をべんきょう"
+
+GlossParts: []string{"私(I; me)",
+	"は (indicates sentence topic; indicates contrast with another option (stated or unstated); adds emphasis)",
+	"日本語 (Japanese (language))",
+	"を (indicates direct object of action; indicates subject of causative expression; indicates an area traversed; indicates time (period) over which action takes place; indicates point of departure or separation of action; indicates object of desire, like, hate, etc.)",
+	"勉強 (study; diligence; working hard; experience; lesson (for the future); discount; price reduction)",
+	"して (to do; to carry out; to perform; to cause to become; to make (into); to turn (into); to serve as; to act as; to work as; to wear (clothes, a facial expression, etc.); to judge as being; to view as being; to think of as; to treat as; to use as; to decide on; to choose; to be sensed (of a smell, noise, etc.); to be (in a state, condition, etc.); to be worth; to cost; to pass (of time); to elapse; to place, or raise, person A to a post or status B; to transform A to B; to make A into B; to exchange A for B; to make use of A for B; to view A as B; to handle A as if it were B; to feel A about B; verbalizing suffix (applies to nouns noted in this dictionary with the part of speech \"vs\"); creates a humble verb (after a noun prefixed with \"o\" or \"go\"); to be just about to; to be just starting to; to try to; to attempt to)",
+	"います (to be (of animate objects); to exist; to stay; to be ...-ing; to have been ...-ing)"}
+```
+
+### Context-Aware API
+
+Same API but with context support for better timeout and cancellation control.
+
+```go
+// Create a context with timeout
+ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+defer cancel()
+
+// Initialize with context
+ichiran.InitWithContext(ctx)
+
+// Analyze with context
+tokens, err := ichiran.AnalyzeWithContext(ctx, "こんにちは")
 ```
 
 ### Manager-Based API (Multiple Instances)
 
 ```go
-import (
-	"context"
-	"fmt"
-	"log"
-	"time"
+// Create managers with different configurations
+manager1, err := ichiran.NewManager(ctx, ichiran.WithProjectName("instance1"))
+manager2, err := ichiran.NewManager(ctx, ichiran.WithProjectName("instance2"))
 
-	"github.com/tassa-yoniso-manasi-karoto/go-ichiran"
-)
+// Use them independently
+tokens1, err := manager1.Analyze(ctx, "こんにちは")
+tokens2, err := manager2.Analyze(ctx, "さようなら")
 
-func main() {
-	// Create a context with timeout
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-	defer cancel()
-	
-	// Create a custom manager with options
-	manager, err := ichiran.NewManager(ctx, 
-		ichiran.WithProjectName("ichiran-custom"),
-		ichiran.WithQueryTimeout(1*time.Minute))
-	if err != nil {
-		log.Fatal(err)
-	}
-	
-	// Initialize the environment
-	if err := manager.Init(ctx); err != nil {
-		log.Fatal(err)
-	}
-	defer manager.Close()
-
-	// Analyze Japanese text using the custom manager
-	tokens, err := manager.Analyze(ctx, "私は日本語を勉強しています")
-	if err != nil {
-		log.Fatal(err)
-	}
-	
-	// Process the results
-	fmt.Printf("Tokenized: %#v\n", tokens.Tokenized())
-	fmt.Printf("Kana: %#v\n", tokens.Kana())
-	fmt.Printf("Roman: %#v\n", tokens.Roman())
-	
-	// Run a second manager instance with different settings
-	manager2, err := ichiran.NewManager(ctx, 
-		ichiran.WithProjectName("ichiran-second"),
-		ichiran.WithContainerName("ichiran-second-main-1"))
-	if err != nil {
-		log.Fatal(err)
-	}
-	
-	if err := manager2.Init(ctx); err != nil {
-		log.Fatal(err)
-	}
-	defer manager2.Close()
-	
-	// Use the second manager instance
-	tokens2, err := manager2.Analyze(ctx, "さようなら")
-	if err != nil {
-		log.Fatal(err)
-	}
-	fmt.Printf("Second manager result: %#v\n", tokens2.Roman())
-}
+// Clean up
+manager1.Close()
+manager2.Close()
 ```
  
 ### Output

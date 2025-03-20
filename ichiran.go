@@ -126,13 +126,18 @@ func (im *IchiranManager) Analyze(ctx context.Context, text string) (*JSONTokens
 	return tokens, nil
 }
 
-// For backward compatibility with existing code
-func Analyze(ctx context.Context, text string) (*JSONTokens, error) {
+// AnalyzeWithContext is the context-aware version for analyzing text
+func AnalyzeWithContext(ctx context.Context, text string) (*JSONTokens, error) {
 	mgr, err := getOrCreateDefaultManager(ctx)
 	if err != nil {
 		return nil, err
 	}
 	return mgr.Analyze(ctx, text)
+}
+
+// Analyze is the backward compatible version that creates a new background context
+func Analyze(text string) (*JSONTokens, error) {
+	return AnalyzeWithContext(context.Background(), text)
 }
 
 // safe escapes special characters in the input text for shell command usage.
