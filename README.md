@@ -18,31 +18,109 @@ A Go library for Japanese text analysis using the [Ichiran](https://github.com/t
 go get github.com/tassa-yoniso-manasi-karoto/go-ichiran
 ```
 
-## tldr
+## Quick Start
+
+### Package-Level Functions (Simple Usage)
 
 ```go
+import (
+	"context"
+	"fmt"
+	"log"
+
+	"github.com/tassa-yoniso-manasi-karoto/go-ichiran"
+)
+
 func main() {
+	// Create a context
+	ctx := context.Background()
+	
 	// Initialize the environment (downloads, builds and starts containers)
-	ichiran.MustInit()
+	if err := ichiran.Init(ctx); err != nil {
+		log.Fatal(err)
+	}
 	defer ichiran.Close()
 
-	tokens, err := ichiran.Analyze("私は日本語を勉強しています")
-	check(err)
+	// Analyze Japanese text
+	tokens, err := ichiran.Analyze(ctx, "私は日本語を勉強しています")
+	if err != nil {
+		log.Fatal(err)
+	}
 	
-	// Selective transliteration: preserve only the top 1000 most frequent kanji.
+	// Selective transliteration: preserve only the top 1000 most frequent kanji
 	tlit, err := tokens.SelectiveTranslit(1000)
-	check(err)
+	if err != nil {
+		log.Fatal(err)
+	}
 	
-	fmt.Printf("Tokenized: %#v\n",		tokens.Tokenized())
-	fmt.Printf("TokenizedParts: %#v\n\n",	tokens.TokenizedParts())
-	fmt.Printf("Kana: %#v\n",		tokens.Kana())
-	fmt.Printf("KanaParts: %#v\n\n",	tokens.KanaParts())
-	fmt.Printf("Roman: %#v\n",		tokens.Roman())
-	fmt.Printf("RomanParts: %#v\n\n",	tokens.RomanParts())
+	fmt.Printf("Tokenized: %#v\n", tokens.Tokenized())
+	fmt.Printf("Kana: %#v\n", tokens.Kana())
+	fmt.Printf("Roman: %#v\n", tokens.Roman())
+	fmt.Printf("SelectiveTranslit: %#v\n", tlit)
+}
+```
+
+### Manager-Based API (Multiple Instances)
+
+```go
+import (
+	"context"
+	"fmt"
+	"log"
+	"time"
+
+	"github.com/tassa-yoniso-manasi-karoto/go-ichiran"
+)
+
+func main() {
+	// Create a context with timeout
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
 	
-	fmt.Printf("SelectiveTranslit: %#v\n\n",	tlit)
+	// Create a custom manager with options
+	manager, err := ichiran.NewManager(ctx, 
+		ichiran.WithProjectName("ichiran-custom"),
+		ichiran.WithQueryTimeout(1*time.Minute))
+	if err != nil {
+		log.Fatal(err)
+	}
 	
-	fmt.Printf("GlossParts: %#v\n",		tokens.GlossParts())
+	// Initialize the environment
+	if err := manager.Init(ctx); err != nil {
+		log.Fatal(err)
+	}
+	defer manager.Close()
+
+	// Analyze Japanese text using the custom manager
+	tokens, err := manager.Analyze(ctx, "私は日本語を勉強しています")
+	if err != nil {
+		log.Fatal(err)
+	}
+	
+	// Process the results
+	fmt.Printf("Tokenized: %#v\n", tokens.Tokenized())
+	fmt.Printf("Kana: %#v\n", tokens.Kana())
+	fmt.Printf("Roman: %#v\n", tokens.Roman())
+	
+	// Run a second manager instance with different settings
+	manager2, err := ichiran.NewManager(ctx, 
+		ichiran.WithProjectName("ichiran-second"),
+		ichiran.WithContainerName("ichiran-second-main-1"))
+	if err != nil {
+		log.Fatal(err)
+	}
+	
+	if err := manager2.Init(ctx); err != nil {
+		log.Fatal(err)
+	}
+	defer manager2.Close()
+	
+	// Use the second manager instance
+	tokens2, err := manager2.Analyze(ctx, "さようなら")
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Printf("Second manager result: %#v\n", tokens2.Roman())
 }
 ```
  
@@ -70,9 +148,8 @@ GlossParts: []string{"私(I; me)",
 ```
 
 
-
 > [!TIP]
-> if you have 'exec: "ichiran-cli": executable file not found' errors, remove directory ./docker/pgdata (as recommended by README of ichiran repo) at location below and use docker.InitForce() to bypass cache and force rebuild from scratch.
+> if you have 'exec: "ichiran-cli": executable file not found' errors, remove directory ./docker/pgdata (as recommended by README of ichiran repo) at location below and use `InitRecreate(ctx, true)` to bypass cache and force rebuild from scratch.
 
 > [!NOTE]
 > Because ichiran doesn't retain spaces during its tokenization, the methods Roman, Kana, Tokenized are simply wrappers around RomanParts, KanaParts, TokenizedParts that joins their parts indiscriminately with a space.<br> For a more robust implementation that worksaround this limitation, use go-ichiran through [translitkit](https://github.com/tassa-yoniso-manasi-karoto/translitkit).

@@ -20,28 +20,16 @@ import (
 	"github.com/tassa-yoniso-manasi-karoto/dockerutil"
 )
 
-/*
-Libraries:
-https://pkg.go.dev/github.com/docker/compose/v2@v2.32.1/pkg/compose#NewComposeService
-https://pkg.go.dev/github.com/docker/compose/v2@v2.32.1/pkg/api#Service
-https://pkg.go.dev/github.com/docker/cli@v27.4.1+incompatible/cli/command
-https://pkg.go.dev/github.com/docker/cli@v27.4.1+incompatible/cli/flags
-*/
-
 const (
 	remote        = "https://github.com/tshatrov/ichiran.git"
 	projectName   = "ichiran"
-	ContainerName = "ichiran-main-1"
+	containerName = "ichiran-main-1"
 )
 
-
 var (
-	instance       *docker
-	once           sync.Once
-	mu             sync.Mutex
-	Ctx            = context.Background()
-	QueryTimeout   = 45 * time.Minute
-	DockerLogLevel = zerolog.TraceLevel
+	// Default settings for backward compatibility
+	DefaultQueryTimeout = 45 * time.Minute
+	DefaultDockerLogLevel = zerolog.TraceLevel
 	
 	reMultipleSpacesSeq = regexp.MustCompile(`\s{2,}`)
 	Logger              = zerolog.Nop()
@@ -49,109 +37,191 @@ var (
 	errNoJSONFound = fmt.Errorf("no valid JSON line found in output")
 )
 
-type docker struct {
-	docker *dockerutil.DockerManager
-	logger *dockerutil.ContainerLogConsumer
+// IchiranManager handles Docker lifecycle for the Ichiran project
+type IchiranManager struct {
+	docker      *dockerutil.DockerManager
+	logger      *dockerutil.ContainerLogConsumer
+	projectName string
+	containerName string
+	QueryTimeout time.Duration
 }
 
-// newDocker creates or returns an existing docker instance
-func newDocker() (*docker, error) {
-	mu.Lock()
-	defer mu.Unlock()
+// ManagerOption defines function signature for options to configure IchiranManager
+type ManagerOption func(*IchiranManager)
 
-	var initErr error
-	once.Do(func() {
-		logConfig := dockerutil.LogConfig{
-			Prefix:      projectName,
-			ShowService: true,
-			ShowType:    true,
-			LogLevel:    DockerLogLevel,
-			InitMessage: "All set, awaiting commands",
-		}
-
-		logger := dockerutil.NewContainerLogConsumer(logConfig)
-
-		cfg := dockerutil.Config{
-			ProjectName:      projectName,
-			ComposeFile:      "docker-compose.yml",
-			RemoteRepo:       remote,
-			RequiredServices: []string{"main", "pg"},
-			LogConsumer:      logger,
-			Timeout: dockerutil.Timeout{
-				Create:   200 * time.Second,
-				Recreate: 25 * time.Minute,
-				Start:    60 * time.Second,
-			},
-		}
-
-		manager, err := dockerutil.NewDockerManager(Ctx, cfg)
-		if err != nil {
-			initErr = err
-			return
-		}
-
-		instance = &docker{
-			docker: manager,
-			logger: logger,
-		}
-	})
-
-	if initErr != nil {
-		return nil, initErr
+// WithQueryTimeout sets a custom query timeout
+func WithQueryTimeout(timeout time.Duration) ManagerOption {
+	return func(im *IchiranManager) {
+		im.QueryTimeout = timeout
 	}
-	return instance, nil
+}
+
+// WithProjectName sets a custom project name for multiple instances
+func WithProjectName(name string) ManagerOption {
+	return func(im *IchiranManager) {
+		im.projectName = name
+		// Default container name is derived from project name
+		im.containerName = name + "-main-1"
+	}
+}
+
+// WithContainerName overrides the default container name
+func WithContainerName(name string) ManagerOption {
+	return func(im *IchiranManager) {
+		im.containerName = name
+	}
+}
+
+// NewManager creates a new Ichiran manager instance
+func NewManager(ctx context.Context, opts ...ManagerOption) (*IchiranManager, error) {
+	manager := &IchiranManager{
+		projectName: projectName,
+		containerName: containerName,
+		QueryTimeout: DefaultQueryTimeout,
+	}
+	
+	// Apply options
+	for _, opt := range opts {
+		opt(manager)
+	}
+	
+	logConfig := dockerutil.LogConfig{
+		Prefix:      manager.projectName,
+		ShowService: true,
+		ShowType:    true,
+		LogLevel:    DefaultDockerLogLevel,
+		InitMessage: "All set, awaiting commands",
+	}
+
+	logger := dockerutil.NewContainerLogConsumer(logConfig)
+
+	cfg := dockerutil.Config{
+		ProjectName:      manager.projectName,
+		ComposeFile:      "docker-compose.yml",
+		RemoteRepo:       remote,
+		RequiredServices: []string{"main", "pg"},
+		LogConsumer:      logger,
+		Timeout: dockerutil.Timeout{
+			Create:   200 * time.Second,
+			Recreate: 25 * time.Minute,
+			Start:    60 * time.Second,
+		},
+	}
+
+	dockerManager, err := dockerutil.NewDockerManager(ctx, cfg)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create Docker manager: %w", err)
+	}
+
+	manager.docker = dockerManager
+	manager.logger = logger
+	
+	return manager, nil
 }
 
 // Init initializes the docker service
-func Init() error {
-	if instance == nil {
-		if _, err := newDocker(); err != nil {
-			return err
-		}
-	}
-	return instance.docker.Init()
+func (im *IchiranManager) Init(ctx context.Context) error {
+	return im.docker.Init()
 }
 
 // InitQuiet initializes the docker service with reduced logging
-func InitQuiet() error {
-	if instance == nil {
-		if _, err := newDocker(); err != nil {
-			return err
-		}
-	}
-	return instance.docker.InitQuiet()
+func (im *IchiranManager) InitQuiet(ctx context.Context) error {
+	return im.docker.InitQuiet()
 }
 
-// InitRecreate remove existing containers (if noCache is true, downloads the lastest
-// version of dependencies ignoring local cache), then builds and up the containers
-func InitRecreate(noCache bool) error {
-	if instance == nil {
-		if _, err := newDocker(); err != nil {
-			return err
-		}
-	}
+// InitRecreate remove existing containers then builds and up the containers
+func (im *IchiranManager) InitRecreate(ctx context.Context, noCache bool) error {
 	if noCache {
-		return instance.docker.InitRecreateNoCache()
+		return im.docker.InitRecreateNoCache()
 	}
-	return instance.docker.InitRecreate()
+	return im.docker.InitRecreate()
 }
 
-func MustInit() {
-	if instance == nil {
-		newDocker()
+// MustInit initializes the docker service and panics on error
+func (im *IchiranManager) MustInit(ctx context.Context) {
+	if err := im.InitRecreate(ctx, true); err != nil {
+		panic(err)
 	}
-	instance.docker.InitRecreateNoCache()
 }
 
-// Stop stops the ichiran service
-func Stop() error {
+// Stop stops the docker service
+func (im *IchiranManager) Stop(ctx context.Context) error {
+	return im.docker.Stop()
+}
+
+// Close implements io.Closer
+func (im *IchiranManager) Close() error {
+	im.logger.Close()
+	return im.docker.Close()
+}
+
+// Status returns the current status of the project
+func (im *IchiranManager) Status(ctx context.Context) (string, error) {
+	return im.docker.Status()
+}
+
+// GetContainerName returns the name of the main container
+func (im *IchiranManager) GetContainerName() string {
+	return im.containerName
+}
+
+// For backward compatibility with existing code
+var (
+	instance *IchiranManager
+	once sync.Once
+	mu sync.Mutex
+)
+
+// Init initializes the default docker service (for backward compatibility)
+func Init(ctx context.Context) error {
+	mgr, err := getOrCreateDefaultManager(ctx)
+	if err != nil {
+		return err
+	}
+	return mgr.Init(ctx)
+}
+
+// InitQuiet initializes the docker service with reduced logging (for backward compatibility)
+func InitQuiet(ctx context.Context) error {
+	mgr, err := getOrCreateDefaultManager(ctx)
+	if err != nil {
+		return err
+	}
+	return mgr.InitQuiet(ctx)
+}
+
+// InitRecreate removes existing containers (for backward compatibility)
+func InitRecreate(ctx context.Context, noCache bool) error {
+	mgr, err := getOrCreateDefaultManager(ctx)
+	if err != nil {
+		return err
+	}
+	return mgr.InitRecreate(ctx, noCache)
+}
+
+// MustInit initializes the docker service (for backward compatibility)
+func MustInit(ctx context.Context) {
+	mgr, _ := getOrCreateDefaultManager(ctx)
+	mgr.MustInit(ctx)
+}
+
+// Stop stops the docker service (for backward compatibility)
+func Stop(ctx context.Context) error {
 	if instance == nil {
 		return fmt.Errorf("docker instance not initialized")
 	}
-	return instance.docker.Stop()
+	return instance.Stop(ctx)
 }
 
-// Close implements io.Closer. It is just a convenience wrapper for Stop().
+// Status returns the current status of the project (for backward compatibility)
+func Status(ctx context.Context) (string, error) {
+	if instance == nil {
+		return "", fmt.Errorf("docker instance not initialized")
+	}
+	return instance.Status(ctx)
+}
+
+// Close implements io.Closer (for backward compatibility)
 func Close() error {
 	if instance != nil {
 		instance.logger.Close()
@@ -160,11 +230,25 @@ func Close() error {
 	return nil
 }
 
-func Status() (string, error) {
-	if instance == nil {
-		return "", fmt.Errorf("docker instance not initialized")
+// getOrCreateDefaultManager returns or creates the default manager instance
+func getOrCreateDefaultManager(ctx context.Context) (*IchiranManager, error) {
+	mu.Lock()
+	defer mu.Unlock()
+	
+	var initErr error
+	once.Do(func() {
+		mgr, err := NewManager(ctx)
+		if err != nil {
+			initErr = err
+			return
+		}
+		instance = mgr
+	})
+	
+	if initErr != nil {
+		return nil, initErr
 	}
-	return instance.docker.Status()
+	return instance, nil
 }
 
 // readDockerOutput reads and processes multiplexed output from Docker.

@@ -20,32 +20,24 @@ import (
 // Analyze performs a single call to get morphological analysis, kanji-kana mappings,
 // romanization, and all other relevant information using the optimized Lisp snippet.
 // This is the most efficient way to analyze text as it gets all data in a single call.
-func Analyze(text string) (*JSONTokens, error) {
-	ctx, cancel := context.WithTimeout(Ctx, QueryTimeout)
+func (im *IchiranManager) Analyze(ctx context.Context, text string) (*JSONTokens, error) {
+	queryCtx, cancel := context.WithTimeout(ctx, im.QueryTimeout)
 	defer cancel()
 
-	mu.Lock()
-	docker := instance
-	mu.Unlock()
-
-	if docker == nil {
-		return nil, fmt.Errorf("Docker manager not initialized. Call Init() first")
-	}
-
 	// Get Docker client
-	client, err := docker.docker.GetClient()
+	client, err := im.docker.GetClient()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get Docker client: %w", err)
 	}
 
 	// Check container status
-	containerInfo, err := client.ContainerInspect(ctx, ContainerName)
+	containerInfo, err := client.ContainerInspect(queryCtx, im.containerName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to inspect container: %w", err)
 	}
 
 	if !containerInfo.State.Running {
-		return nil, fmt.Errorf("container %s is not running", ContainerName)
+		return nil, fmt.Errorf("container %s is not running", im.containerName)
 	}
 
 	// Load the optimized Lisp snippet and replace the placeholder
@@ -85,9 +77,6 @@ func Analyze(text string) (*JSONTokens, error) {
 		execCommand,
 	}
 
-	// Print the command for debugging
-	//fmt.Printf("EXECUTING DOCKER COMMAND:\n%s\n", execCommand)
-
 	// Create execution config
 	execConfig := types.ExecConfig{
 		User:         containerInfo.Config.User,
@@ -99,13 +88,13 @@ func Analyze(text string) (*JSONTokens, error) {
 	}
 
 	// Create execution
-	exec, err := client.ContainerExecCreate(ctx, ContainerName, execConfig)
+	exec, err := client.ContainerExecCreate(queryCtx, im.containerName, execConfig)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create exec: %w", err)
 	}
 
 	// Attach to execution
-	resp, err := client.ContainerExecAttach(ctx, exec.ID, types.ExecStartCheck{})
+	resp, err := client.ContainerExecAttach(queryCtx, exec.ID, types.ExecStartCheck{})
 	if err != nil {
 		return nil, fmt.Errorf("failed to attach to exec: %w", err)
 	}
@@ -118,7 +107,7 @@ func Analyze(text string) (*JSONTokens, error) {
 	}
 
 	// Check execution status
-	inspect, err := client.ContainerExecInspect(ctx, exec.ID)
+	inspect, err := client.ContainerExecInspect(queryCtx, exec.ID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to inspect exec: %w", err)
 	}
@@ -135,6 +124,15 @@ func Analyze(text string) (*JSONTokens, error) {
 	}
 
 	return tokens, nil
+}
+
+// For backward compatibility with existing code
+func Analyze(ctx context.Context, text string) (*JSONTokens, error) {
+	mgr, err := getOrCreateDefaultManager(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return mgr.Analyze(ctx, text)
 }
 
 // safe escapes special characters in the input text for shell command usage.

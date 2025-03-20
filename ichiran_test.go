@@ -1,10 +1,134 @@
 package ichiran
 
 import (
+	"context"
 	"testing"
+	"time"
+	"strings"
 
 	"github.com/stretchr/testify/assert"
 )
+
+// TestNewManagerAPI demonstrates using the new manager-based API
+func TestNewManagerAPI(t *testing.T) {
+	t.Skip("Skipping test that requires Docker container - run manually with ICHIRAN_MANUAL_TEST=1")
+	
+	// Create a context with timeout
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	
+	// Create a custom manager with options
+	manager, err := NewManager(ctx, 
+		WithProjectName("ichiran-test"),
+		WithQueryTimeout(1*time.Minute))
+	assert.NoError(t, err)
+	assert.NotNil(t, manager)
+	
+	// Initialize with quiet mode to reduce log output
+	err = manager.InitQuiet(ctx)
+	assert.NoError(t, err)
+	
+	// Clean up when done
+	defer manager.Close()
+	
+	// Test analysis with the manager
+	result, err := manager.Analyze(ctx, "こんにちは")
+	assert.NoError(t, err)
+	assert.NotNil(t, result)
+	
+	// Verify we got meaningful results
+	assert.Greater(t, len(*result), 0, "Expected non-empty result")
+	
+	// Check if we got the expected token
+	found := false
+	for _, token := range *result {
+		if token.Surface == "こんにちは" {
+			found = true
+			assert.Contains(t, strings.ToLower(token.Romaji), "konnichiha")
+			break
+		}
+	}
+	
+	assert.True(t, found, "Expected to find token 'こんにちは' in results")
+}
+
+// TestBackwardCompatibilityAPI demonstrates the backward compatibility layer
+func TestBackwardCompatibilityAPI(t *testing.T) {
+	t.Skip("Skipping test that requires Docker container - run manually with ICHIRAN_MANUAL_TEST=1")
+	
+	// Create a context with timeout
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	
+	// Initialize with the global functions
+	err := InitQuiet(ctx)
+	assert.NoError(t, err)
+	
+	// Clean up when done
+	defer Close()
+	
+	// Test analysis with the global function
+	result, err := Analyze(ctx, "こんにちは")
+	assert.NoError(t, err)
+	assert.NotNil(t, result)
+	
+	// Verify we got meaningful results
+	assert.Greater(t, len(*result), 0, "Expected non-empty result")
+	
+	// Check if we got the expected token
+	found := false
+	for _, token := range *result {
+		if token.Surface == "こんにちは" {
+			found = true
+			assert.Contains(t, strings.ToLower(token.Romaji), "konnichiha")
+			break
+		}
+	}
+	
+	assert.True(t, found, "Expected to find token 'こんにちは' in results")
+}
+
+// TestMultipleInstances demonstrates running multiple Ichiran instances concurrently
+func TestMultipleInstances(t *testing.T) {
+	t.Skip("Skipping test that requires Docker container - run manually with ICHIRAN_MANUAL_TEST=1")
+	
+	// Create a context with timeout
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+	
+	// Create two managers with different project names
+	manager1, err := NewManager(ctx, 
+		WithProjectName("ichiran-test1"),
+		WithContainerName("ichiran-test1-main-1"))
+	assert.NoError(t, err)
+	assert.NotNil(t, manager1)
+	
+	manager2, err := NewManager(ctx, 
+		WithProjectName("ichiran-test2"),
+		WithContainerName("ichiran-test2-main-1"))
+	assert.NoError(t, err)
+	assert.NotNil(t, manager2)
+	
+	// Initialize both managers
+	err = manager1.InitQuiet(ctx)
+	assert.NoError(t, err)
+	defer manager1.Close()
+	
+	err = manager2.InitQuiet(ctx)
+	assert.NoError(t, err)
+	defer manager2.Close()
+	
+	// Test analysis with both managers
+	result1, err := manager1.Analyze(ctx, "こんにちは")
+	assert.NoError(t, err)
+	assert.NotNil(t, result1)
+	assert.Greater(t, len(*result1), 0, "Expected non-empty result from manager1")
+	
+	result2, err := manager2.Analyze(ctx, "さようなら")
+	assert.NoError(t, err)
+	assert.NotNil(t, result2)
+	assert.Greater(t, len(*result2), 0, "Expected non-empty result from manager2")
+}
 
 func TestUnescapeUnicodeString(t *testing.T) {
 	tests := []struct {
