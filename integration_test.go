@@ -9,6 +9,190 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestDefaultInstanceRecreation tests that the default instance can be properly recreated
+// after being closed
+func TestDefaultInstanceRecreation(t *testing.T) {
+	t.Skip("Skipping test that requires Docker container - run manually with ICHIRAN_MANUAL_TEST=1")
+	
+	// First lifecycle
+	ctx1 := context.Background()
+	err := InitWithContext(ctx1)
+	assert.NoError(t, err, "First initialization should succeed")
+	
+	// Do something with the first instance
+	tokens1, err := AnalyzeWithContext(ctx1, "こんにちは")
+	assert.NoError(t, err, "First analysis should succeed")
+	assert.NotNil(t, tokens1, "Should get valid tokens from first analysis")
+	
+	// Close the first instance
+	err = Close()
+	assert.NoError(t, err, "Closing should succeed")
+	
+	// Wait a moment to ensure all shutdown operations complete
+	time.Sleep(2 * time.Second)
+	
+	// Second lifecycle with a new context
+	ctx2 := context.Background()
+	err = InitWithContext(ctx2)
+	assert.NoError(t, err, "Second initialization should succeed")
+	
+	// Do something with the second instance
+	tokens2, err := AnalyzeWithContext(ctx2, "こんにちは")
+	assert.NoError(t, err, "Second analysis should succeed")
+	assert.NotNil(t, tokens2, "Should get valid tokens from second analysis")
+	
+	// Clean up
+	err = Close()
+	assert.NoError(t, err, "Final cleanup should succeed")
+}
+
+// TestBackwardCompatMultipleLifecycles tests the backward compatible API
+// with multiple init-analyze-close cycles
+func TestBackwardCompatMultipleLifecycles(t *testing.T) {
+	t.Skip("Skipping test that requires Docker container - run manually with ICHIRAN_MANUAL_TEST=1")
+	
+	// First lifecycle
+	err := Init()
+	assert.NoError(t, err, "First initialization should succeed")
+	
+	tokens1, err := Analyze("こんにちは")
+	assert.NoError(t, err, "First analysis should succeed")
+	assert.NotNil(t, tokens1, "Should get valid tokens from first analysis")
+	
+	err = Close()
+	assert.NoError(t, err, "First closing should succeed")
+	
+	// Wait a moment to ensure all shutdown operations complete
+	time.Sleep(2 * time.Second)
+	
+	// Second lifecycle
+	err = Init()
+	assert.NoError(t, err, "Second initialization should succeed")
+	
+	tokens2, err := Analyze("さようなら")
+	assert.NoError(t, err, "Second analysis should succeed")
+	assert.NotNil(t, tokens2, "Should get valid tokens from second analysis")
+	
+	err = Close()
+	assert.NoError(t, err, "Second closing should succeed")
+}
+
+
+// TestAnalyzeWithContext demonstrates the context-aware API
+func TestAnalyzeWithContext(t *testing.T) {
+	t.Skip("Skipping test that requires Docker container - run manually with ICHIRAN_MANUAL_TEST=1")
+	
+	// Create a context with timeout
+	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Minute)
+	defer cancel()
+	
+	// Initialize with context
+	err := InitWithContext(ctx)
+	assert.NoError(t, err)
+	defer Close()
+	
+	// Use the context-aware Analyze function
+	tokens, err := AnalyzeWithContext(ctx, "こんにちは")
+	assert.NoError(t, err)
+	assert.NotNil(t, tokens)
+	
+	// Check the results
+	found := false
+	for _, token := range *tokens {
+		if token.Surface == "こんにちは" {
+			found = true
+			assert.Contains(t, strings.ToLower(token.Romaji), "konnichiha")
+			break
+		}
+	}
+	assert.True(t, found, "Expected to find token 'こんにちは' in results")
+}
+
+// TestNewManagerAPI demonstrates using the manager-based API
+func TestNewManagerAPI(t *testing.T) {
+	t.Skip("Skipping test that requires Docker container - run manually with ICHIRAN_MANUAL_TEST=1")
+	
+	// Create a context with timeout
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	
+	// Create a custom manager with options
+	manager, err := NewManager(ctx, 
+		WithProjectName("ichiran-test"),
+		WithQueryTimeout(1*time.Minute))
+	assert.NoError(t, err)
+	assert.NotNil(t, manager)
+	
+	// Initialize with quiet mode to reduce log output
+	err = manager.InitQuiet(ctx)
+	assert.NoError(t, err)
+	
+	// Clean up when done
+	defer manager.Close()
+	
+	// Test analysis with the manager
+	result, err := manager.Analyze(ctx, "こんにちは")
+	assert.NoError(t, err)
+	assert.NotNil(t, result)
+	
+	// Verify we got meaningful results
+	assert.Greater(t, len(*result), 0, "Expected non-empty result")
+	
+	// Check if we got the expected token
+	found := false
+	for _, token := range *result {
+		if token.Surface == "こんにちは" {
+			found = true
+			assert.Contains(t, strings.ToLower(token.Romaji), "konnichiha")
+			break
+		}
+	}
+	
+	assert.True(t, found, "Expected to find token 'こんにちは' in results")
+}
+
+// TestMultipleInstances demonstrates running multiple Ichiran instances concurrently
+func TestMultipleInstances(t *testing.T) {
+	t.Skip("Skipping test that requires Docker container - run manually with ICHIRAN_MANUAL_TEST=1")
+	
+	// Create a context with timeout
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+	
+	// Create two managers with different project names
+	manager1, err := NewManager(ctx, 
+		WithProjectName("ichiran-test1"),
+		WithContainerName("ichiran-test1-main-1"))
+	assert.NoError(t, err)
+	assert.NotNil(t, manager1)
+	
+	manager2, err := NewManager(ctx, 
+		WithProjectName("ichiran-test2"),
+		WithContainerName("ichiran-test2-main-1"))
+	assert.NoError(t, err)
+	assert.NotNil(t, manager2)
+	
+	// Initialize both managers
+	err = manager1.InitQuiet(ctx)
+	assert.NoError(t, err)
+	defer manager1.Close()
+	
+	err = manager2.InitQuiet(ctx)
+	assert.NoError(t, err)
+	defer manager2.Close()
+	
+	// Test analysis with both managers
+	result1, err := manager1.Analyze(ctx, "こんにちは")
+	assert.NoError(t, err)
+	assert.NotNil(t, result1)
+	assert.Greater(t, len(*result1), 0, "Expected non-empty result from manager1")
+	
+	result2, err := manager2.Analyze(ctx, "さようなら")
+	assert.NoError(t, err)
+	assert.NotNil(t, result2)
+	assert.Greater(t, len(*result2), 0, "Expected non-empty result from manager2")
+}
+
 // TestFullPipelineIntegration tests the complete Japanese analysis pipeline
 func TestFullPipelineIntegration(t *testing.T) {
 	// Skip test if not in manual test mode
