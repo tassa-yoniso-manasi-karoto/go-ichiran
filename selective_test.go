@@ -564,3 +564,65 @@ func TestTransliterationResult(t *testing.T) {
 	assert.Equal(t, 3, preservedTokens)
 	assert.Equal(t, 2, nonKanjiTokens)
 }
+
+
+func TestSelectiveTransliterationWithTokenization(t *testing.T) {
+	// Skip if not in manual test mode
+	if os.Getenv("ICHIRAN_MANUAL_TEST") != "1" {
+		t.Skip("Skipping manual test. Set ICHIRAN_MANUAL_TEST=1 to run.")
+	}
+
+	// Initialize with error handling
+	if err := ichiran.Init(); err != nil {
+		t.Fatalf("Failed to initialize: %v", err)
+	}
+	defer ichiran.Close()
+
+	// Test data
+	testSentence := "最先端の科学技術を駆使し、複雑なアルゴリズムを多角的に分析することで、地球規模の環境変動がもたらす生態系への影響を詳細に予測し、持続可能な社会の実現に向けた具体的な対策を立案することを目標としています。"
+	freqThresholds := []int{500, 1000, 1500}
+
+	// Run tests
+	tokens, err := ichiran.Analyze(testSentence)
+	if err != nil {
+		t.Fatalf("Failed to analyze text: %v", err)
+	}
+
+	// Regular tokenization for comparison
+	fmt.Printf("Original: %s\n", testSentence)
+	fmt.Printf("Tokenized: %s\n", tokens.Tokenized())
+	fmt.Printf("Kana: %s\n\n", tokens.Kana())
+
+	// Compare non-tokenized vs tokenized transliteration at different thresholds
+	for _, threshold := range freqThresholds {
+		// Non-tokenized selective transliteration
+		nonTokenized, err := tokens.SelectiveTranslit(threshold)
+		if err != nil {
+			t.Errorf("Failed selective transliteration with threshold %d: %v", threshold, err)
+			continue
+		}
+
+		// Tokenized selective transliteration
+		tokenized, err := tokens.SelectiveTranslitTokenized(threshold)
+		if err != nil {
+			t.Errorf("Failed tokenized selective transliteration with threshold %d: %v", threshold, err)
+			continue
+		}
+
+		fmt.Printf("Threshold %d:\n", threshold)
+		fmt.Printf("  Non-tokenized: %s\n", nonTokenized)
+		fmt.Printf("  Tokenized: %s\n\n", tokenized)
+	}
+
+	// Get detailed mapping
+	result, err := tokens.SelectiveTranslitFullMappingTokenized(1000)
+	if err != nil {
+		t.Fatalf("Failed to get full mapping: %v", err)
+	}
+
+	// Print detailed processing information for one threshold
+	fmt.Println("Processing details at threshold 1000:")
+	ichiran.PrintProcessingDetails(result)
+}
+
+

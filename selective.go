@@ -39,17 +39,33 @@ func isRegularReading(reading KanjiReading) bool {
 //
 // Parameter freqThreshold: Maximum frequency rank to preserve (1-3000, lower = more frequent)
 func (tokens JSONTokens) SelectiveTranslit(freqThreshold int) (string, error) {
-	tlitStruct, err := tokens.selectiveTranslit(freqThreshold)
+	tlitStruct, err := tokens.selectiveTranslit(freqThreshold, false)
+	return tlitStruct.Text, err
+}
+
+// SelectiveTranslitTokenized performs selective transliteration with spaces between tokens.
+// It uses the same kanji preservation rules as SelectiveTranslit but adds spaces between
+// morphological units to improve readability for learners.
+//
+// Parameter freqThreshold: Maximum frequency rank to preserve (1-3000, lower = more frequent)
+func (tokens JSONTokens) SelectiveTranslitTokenized(freqThreshold int) (string, error) {
+	tlitStruct, err := tokens.selectiveTranslit(freqThreshold, true)
 	return tlitStruct.Text, err
 }
 
 func (tokens JSONTokens) SelectiveTranslitFullMapping(freqThreshold int) (*TransliterationResult, error) {
-	return tokens.selectiveTranslit(freqThreshold)
+	return tokens.selectiveTranslit(freqThreshold, false)
 }
 
-func (tokens JSONTokens) selectiveTranslit(freqThreshold int) (*TransliterationResult, error) {
+// SelectiveTranslitFullMappingTokenized is similar to SelectiveTranslitFullMapping but
+// adds spaces between tokens in the resulting text.
+func (tokens JSONTokens) SelectiveTranslitFullMappingTokenized(freqThreshold int) (*TransliterationResult, error) {
+	return tokens.selectiveTranslit(freqThreshold, true)
+}
+
+func (tokens JSONTokens) selectiveTranslit(freqThreshold int, tokenize bool) (*TransliterationResult, error) {
 	var allProcessedTokens []ProcessedToken
-	var finalResult strings.Builder
+	var tokenResults []string // Store each token's processed result
 
 	// Process each token
 	for _, token := range tokens {
@@ -60,7 +76,7 @@ func (tokens JSONTokens) selectiveTranslit(freqThreshold int) (*TransliterationR
 				Result:   token.Surface,
 				Status:   StatusNotKanji,
 			}
-			finalResult.WriteString(token.Surface)
+			tokenResults = append(tokenResults, token.Surface)
 			allProcessedTokens = append(allProcessedTokens, processedToken)
 			continue
 		}
@@ -74,7 +90,7 @@ func (tokens JSONTokens) selectiveTranslit(freqThreshold int) (*TransliterationR
 				Result:   token.Surface,
 				Status:   StatusUnmappable,
 			}
-			finalResult.WriteString(token.Surface)
+			tokenResults = append(tokenResults, token.Surface)
 			allProcessedTokens = append(allProcessedTokens, processedToken)
 			continue
 		}
@@ -165,16 +181,24 @@ func (tokens JSONTokens) selectiveTranslit(freqThreshold int) (*TransliterationR
 			}
 		}
 
-		// If we couldn't process the token properly, use the kana reading
+		// Store the result for this token
 		if tokenResult.Len() == 0 {
-			finalResult.WriteString(token.Kana)
+			tokenResults = append(tokenResults, token.Kana)
 		} else {
-			finalResult.WriteString(tokenResult.String())
+			tokenResults = append(tokenResults, tokenResult.String())
 		}
 	}
 
+	// Join the token results with or without spaces based on tokenize parameter
+	var finalText string
+	if tokenize {
+		finalText = strings.Join(tokenResults, " ")
+	} else {
+		finalText = strings.Join(tokenResults, "")
+	}
+
 	return &TransliterationResult{
-		Text:   finalResult.String(),
+		Text:   finalText,
 		Tokens: allProcessedTokens,
 	}, nil
 }
