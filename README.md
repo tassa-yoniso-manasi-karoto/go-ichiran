@@ -81,9 +81,6 @@ GlossParts: []string{"私(I; me)",
 > [!TIP]
 > if you have 'exec: "ichiran-cli": executable file not found' errors, remove directory ./docker/pgdata (as recommended by README of ichiran repo) at location below and use `InitRecreate(ctx, true)` to bypass cache and force rebuild from scratch.
 
-> [!NOTE]
-> Because ichiran doesn't retain spaces during its tokenization, the methods Roman, Kana, Tokenized are simply wrappers around RomanParts, KanaParts, TokenizedParts that joins their parts indiscriminately with a space.<br> For a more robust implementation that worksaround this limitation, use go-ichiran through [translitkit](https://github.com/tassa-yoniso-manasi-karoto/translitkit).
-
 
 ### Context-Aware API
 
