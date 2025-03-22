@@ -192,7 +192,7 @@ func (tokens JSONTokens) selectiveTranslit(freqThreshold int, tokenize bool) (*T
 	// Join the token results with or without spaces based on tokenize parameter
 	var finalText string
 	if tokenize {
-		finalText = strings.Join(tokenResults, " ")
+		finalText = JoinWithSpacingRule(tokenResults)
 	} else {
 		finalText = strings.Join(tokenResults, "")
 	}

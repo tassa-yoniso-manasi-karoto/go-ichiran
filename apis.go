@@ -11,12 +11,12 @@ import (
 	"github.com/k0kubun/pp"
 )
 
-// TokenizedStr returns a string of all tokens separated by spaces or commas.
+// TokenizedStr returns a string of all tokens separated by spaces using intelligent spacing rules.
 func (tokens JSONTokens) Tokenized() string {
 	parts := tokens.TokenizedParts()
 	// Debug the token parts to see what we got
 	Logger.Debug().Msgf("Tokenized parts: %v", parts)
-	return strings.Join(parts, " ")
+	return JoinWithSpacingRule(parts)
 }
 
 // TokenizedParts returns a slice of all token surfaces.
@@ -53,10 +53,10 @@ func (tokens JSONTokens) KanaParts() (parts []string) {
 	return
 }
 
-// Roman returns a string of all tokens in romanized form.
+// Roman returns a string of all tokens in romanized form using intelligent spacing rules.
 func (tokens JSONTokens) Roman() string {
 	parts := tokens.RomanParts()
-	return strings.Join(parts, " ")
+	return JoinWithSpacingRule(parts)
 }
 
 // RomanParts returns a slice of all tokens in romanized form.

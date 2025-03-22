@@ -573,17 +573,17 @@ func TestSelectiveTransliterationWithTokenization(t *testing.T) {
 	}
 
 	// Initialize with error handling
-	if err := ichiran.Init(); err != nil {
+	if err := Init(); err != nil {
 		t.Fatalf("Failed to initialize: %v", err)
 	}
-	defer ichiran.Close()
+	defer Close()
 
 	// Test data
 	testSentence := "最先端の科学技術を駆使し、複雑なアルゴリズムを多角的に分析することで、地球規模の環境変動がもたらす生態系への影響を詳細に予測し、持続可能な社会の実現に向けた具体的な対策を立案することを目標としています。"
 	freqThresholds := []int{500, 1000, 1500}
 
 	// Run tests
-	tokens, err := ichiran.Analyze(testSentence)
+	tokens, err := Analyze(testSentence)
 	if err != nil {
 		t.Fatalf("Failed to analyze text: %v", err)
 	}
@@ -622,7 +622,7 @@ func TestSelectiveTransliterationWithTokenization(t *testing.T) {
 
 	// Print detailed processing information for one threshold
 	fmt.Println("Processing details at threshold 1000:")
-	ichiran.PrintProcessingDetails(result)
+	PrintProcessingDetails(result)
 }
 
 
