@@ -1,4 +1,4 @@
-### Status: alpha [![Go Reference](https://pkg.go.dev/badge/github.com/tassa-yoniso-manasi-karoto/go-ichiran.svg)](https://pkg.go.dev/github.com/tassa-yoniso-manasi-karoto/go-ichiran) [![Go Report Card](https://goreportcard.com/badge/github.com/tassa-yoniso-manasi-karoto/go-ichiran)](https://goreportcard.com/report/github.com/tassa-yoniso-manasi-karoto/go-ichiran)
+### Status: beta [![Go Reference](https://pkg.go.dev/badge/github.com/tassa-yoniso-manasi-karoto/go-ichiran.svg)](https://pkg.go.dev/github.com/tassa-yoniso-manasi-karoto/go-ichiran) [![Go Report Card](https://goreportcard.com/badge/github.com/tassa-yoniso-manasi-karoto/go-ichiran)](https://goreportcard.com/report/github.com/tassa-yoniso-manasi-karoto/go-ichiran)
 
 A Go library for Japanese text analysis using the [Ichiran](https://github.com/tshatrov/ichiran) morphological analyzer in Docker compose containers. This client provides easy access to Japanese language parsing, including readings, translations, and grammatical analysis.
 
