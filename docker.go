@@ -35,6 +35,15 @@ var (
 	Logger              = zerolog.Nop()
 	// Logger = zerolog.New(zerolog.ConsoleWriter{Out: os.Stderr, TimeFormat: time.TimeOnly}).With().Timestamp().Logger()
 	errNoJSONFound = fmt.Errorf("no valid JSON line found in output")
+	
+	// IchiranProgressMilestones defines progress checkpoints for first-time initialization
+	// Progress -1 is a special marker for dynamic checkpoint progress
+	IchiranProgressMilestones = []dockerutil.ProgressMilestone{
+		{Pattern: "Starting ichiran DB init!", Progress: 0, Description: "Starting database initialization..."},
+		{Pattern: "checkpoint starting: wal", Progress: 5, Description: "Preparing database structure..."},
+		{Pattern: "checkpoint complete:.*wrote \\d+ buffers", Progress: -1, Description: "Restoring database from official dump..."}, // Dynamic progress
+		{Pattern: "Finished ichiran DB init!", Progress: 95, Description: "Database complete!"},
+	}
 )
 
 // IchiranManager handles Docker lifecycle for the Ichiran project
@@ -44,6 +53,7 @@ type IchiranManager struct {
 	projectName string
 	containerName string
 	QueryTimeout time.Duration
+	progressHandler dockerutil.ProgressHandler
 }
 
 // ManagerOption defines function signature for options to configure IchiranManager
@@ -72,6 +82,13 @@ func WithContainerName(name string) ManagerOption {
 	}
 }
 
+// WithProgressHandler sets a progress handler for tracking initialization
+func WithProgressHandler(handler dockerutil.ProgressHandler) ManagerOption {
+	return func(im *IchiranManager) {
+		im.progressHandler = handler
+	}
+}
+
 // NewManager creates a new Ichiran manager instance
 func NewManager(ctx context.Context, opts ...ManagerOption) (*IchiranManager, error) {
 	manager := &IchiranManager{
@@ -94,6 +111,12 @@ func NewManager(ctx context.Context, opts ...ManagerOption) (*IchiranManager, er
 	}
 
 	logger := dockerutil.NewContainerLogConsumer(logConfig)
+	
+	// Set up progress tracking if handler provided
+	if manager.progressHandler != nil {
+		logger.ProgressHandler = manager.progressHandler
+		logger.Milestones = IchiranProgressMilestones
+	}
 
 	cfg := dockerutil.Config{
 		ProjectName:      manager.projectName,
