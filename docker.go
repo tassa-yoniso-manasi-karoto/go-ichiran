@@ -308,10 +308,17 @@ func getOrCreateDefaultManager(ctx context.Context) (*IchiranManager, error) {
 }
 
 // readDockerOutput reads and processes multiplexed output from Docker.
-func readDockerOutput(reader io.Reader) ([]byte, error) {
+func readDockerOutput(ctx context.Context, reader io.Reader) ([]byte, error) {
 	var output bytes.Buffer
 	header := make([]byte, 8)
 	for {
+		// Check context cancellation before each read
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		default:
+		}
+		
 		_, err := io.ReadFull(reader, header)
 		if err != nil {
 			if err == io.EOF {
@@ -337,9 +344,9 @@ func readDockerOutput(reader io.Reader) ([]byte, error) {
 }
 
 // extractJSONFromDockerOutput combines reading Docker output and extracting JSON
-func extractJSONFromDockerOutput(reader io.Reader) ([]byte, error) {
+func extractJSONFromDockerOutput(ctx context.Context, reader io.Reader) ([]byte, error) {
 	// First, read the Docker multiplexed output.
-	rawOutput, err := readDockerOutput(reader)
+	rawOutput, err := readDockerOutput(ctx, reader)
 	if err != nil {
 		return nil, fmt.Errorf("error reading docker output: %w", err)
 	}
@@ -359,6 +366,13 @@ func extractJSONFromDockerOutput(reader io.Reader) ([]byte, error) {
 	// Use bufio.Reader so we can read arbitrarily long lines.
 	r := bufio.NewReader(bytes.NewReader(rawOutput))
 	for {
+		// Check context cancellation before processing each line
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		default:
+		}
+		
 		line, err := r.ReadBytes('\n')
 		// Trim any extra whitespace.
 		line = bytes.TrimSpace(line)
@@ -391,6 +405,13 @@ func extractJSONFromDockerOutput(reader io.Reader) ([]byte, error) {
 		} else if err != nil {
 			return nil, fmt.Errorf("error reading line: %w", err)
 		}
+	}
+
+	// Check context one more time before returning errNoJSONFound
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	default:
 	}
 
 	return nil, errNoJSONFound

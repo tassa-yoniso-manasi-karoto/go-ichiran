@@ -101,7 +101,7 @@ func (im *IchiranManager) Analyze(ctx context.Context, text string) (*JSONTokens
 	defer resp.Close()
 
 	// Extract JSON from the output
-	output, err := extractJSONFromDockerOutput(resp.Reader)
+	output, err := extractJSONFromDockerOutput(queryCtx, resp.Reader)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read exec output: %w", err)
 	}
