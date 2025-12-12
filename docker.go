@@ -21,9 +21,13 @@ import (
 )
 
 const (
-	remote        = "https://github.com/tshatrov/ichiran.git"
+	remote        = "https://github.com/tassa-yoniso-manasi-karoto/ichiran.git"
 	projectName   = "ichiran"
 	containerName = "ichiran-main-1"
+
+	// GHCR images for pre-built ichiran containers
+	ghcrImageMain = "ghcr.io/tassa-yoniso-manasi-karoto/langkit-ichiran-main:latest"
+	ghcrImagePg   = "ghcr.io/tassa-yoniso-manasi-karoto/langkit-ichiran-pg:latest"
 )
 
 var (
@@ -48,12 +52,13 @@ var (
 
 // IchiranManager handles Docker lifecycle for the Ichiran project
 type IchiranManager struct {
-	docker      *dockerutil.DockerManager
-	logger      *dockerutil.ContainerLogConsumer
-	projectName string
-	containerName string
-	QueryTimeout time.Duration
-	progressHandler dockerutil.ProgressHandler
+	docker                   *dockerutil.DockerManager
+	logger                   *dockerutil.ContainerLogConsumer
+	projectName              string
+	containerName            string
+	QueryTimeout             time.Duration
+	progressHandler          dockerutil.ProgressHandler
+	downloadProgressCallback func(current, total int64, status string)
 }
 
 // ManagerOption defines function signature for options to configure IchiranManager
@@ -86,6 +91,13 @@ func WithContainerName(name string) ManagerOption {
 func WithProgressHandler(handler dockerutil.ProgressHandler) ManagerOption {
 	return func(im *IchiranManager) {
 		im.progressHandler = handler
+	}
+}
+
+// WithDownloadProgressCallback sets a callback for download progress during image pull
+func WithDownloadProgressCallback(cb func(current, total int64, status string)) ManagerOption {
+	return func(im *IchiranManager) {
+		im.downloadProgressCallback = cb
 	}
 }
 
@@ -142,8 +154,25 @@ func NewManager(ctx context.Context, opts ...ManagerOption) (*IchiranManager, er
 	return manager, nil
 }
 
+// PullImages pre-pulls the GHCR images with progress tracking
+func (im *IchiranManager) PullImages(ctx context.Context) error {
+	images := []string{ghcrImagePg, ghcrImageMain}
+
+	opts := dockerutil.DefaultPullOptions()
+	if im.downloadProgressCallback != nil {
+		opts.OnProgress = im.downloadProgressCallback
+	}
+
+	// dockerutil.PullImages handles manifest fetching and unified progress
+	return dockerutil.PullImages(ctx, images, opts)
+}
+
 // Init initializes the docker service
 func (im *IchiranManager) Init(ctx context.Context) error {
+	// Pre-pull images with progress tracking
+	if err := im.PullImages(ctx); err != nil {
+		return fmt.Errorf("failed to pull images: %w", err)
+	}
 	return im.docker.Init()
 }
 

@@ -11,7 +11,7 @@ import (
 	"github.com/k0kubun/pp"
 	"github.com/tidwall/pretty"
 
-	"github.com/docker/docker/api/types"
+	"github.com/docker/docker/api/types/container"
 )
 
 // IMPORTANT: jsonformatter.org is very helpful to help understand ichiran's JSON:
@@ -78,7 +78,7 @@ func (im *IchiranManager) Analyze(ctx context.Context, text string) (*JSONTokens
 	}
 
 	// Create execution config
-	execConfig := types.ExecConfig{
+	execConfig := container.ExecOptions{
 		User:         containerInfo.Config.User,
 		Cmd:          cmd,
 		AttachStdout: true,
@@ -94,7 +94,7 @@ func (im *IchiranManager) Analyze(ctx context.Context, text string) (*JSONTokens
 	}
 
 	// Attach to execution
-	resp, err := client.ContainerExecAttach(queryCtx, exec.ID, types.ExecStartCheck{})
+	resp, err := client.ContainerExecAttach(queryCtx, exec.ID, container.ExecStartOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("failed to attach to exec: %w", err)
 	}
