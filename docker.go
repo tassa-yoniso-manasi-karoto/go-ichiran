@@ -8,11 +8,15 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
+	"regexp"
+	"strings"
 	"sync"
 	"time"
-	"strings"
-	"regexp"
-	
+
+	"github.com/adrg/xdg"
+	"github.com/compose-spec/compose-go/v2/types"
 	"github.com/gookit/color"
 	"github.com/k0kubun/pp"
 	"github.com/rs/zerolog"
@@ -21,7 +25,6 @@ import (
 )
 
 const (
-	remote        = "https://github.com/tassa-yoniso-manasi-karoto/ichiran.git"
 	projectName   = "ichiran"
 	containerName = "ichiran-main-1"
 
@@ -101,19 +104,64 @@ func WithDownloadProgressCallback(cb func(current, total int64, status string)) 
 	}
 }
 
+// ptr returns a pointer to the given string value
+func ptr(s string) *string {
+	return &s
+}
+
+// buildComposeProject creates the compose project definition for ichiran
+func buildComposeProject(dataDir string) *types.Project {
+	// Ensure pgdata directory exists
+	pgdataDir := filepath.Join(dataDir, "pgdata")
+	os.MkdirAll(pgdataDir, 0755)
+
+	return &types.Project{
+		Name: projectName,
+		Services: types.Services{
+			"pg": {
+				Name:    "pg",
+				Image:   ghcrImagePg,
+				ShmSize: types.UnitBytes(1024 * 1024 * 1024), // 1GB
+				Environment: types.MappingWithEquals{
+					"POSTGRES_PASSWORD": ptr("password"),
+					"PGDATA":            ptr("/var/lib/postgresql/data/pgdata"),
+				},
+				Volumes: []types.ServiceVolumeConfig{{
+					Type:   types.VolumeTypeBind,
+					Source: pgdataDir,
+					Target: "/var/lib/postgresql/data",
+				}},
+			},
+			"main": {
+				Name:  "main",
+				Image: ghcrImageMain,
+			},
+		},
+	}
+}
+
 // NewManager creates a new Ichiran manager instance
 func NewManager(ctx context.Context, opts ...ManagerOption) (*IchiranManager, error) {
 	manager := &IchiranManager{
-		projectName: projectName,
+		projectName:   projectName,
 		containerName: containerName,
-		QueryTimeout: DefaultQueryTimeout,
+		QueryTimeout:  DefaultQueryTimeout,
 	}
-	
+
 	// Apply options
 	for _, opt := range opts {
 		opt(manager)
 	}
-	
+
+	// Get XDG data directory for ichiran
+	dataDir := filepath.Join(xdg.ConfigHome, manager.projectName)
+	if err := os.MkdirAll(dataDir, 0755); err != nil {
+		return nil, fmt.Errorf("failed to create data directory: %w", err)
+	}
+
+	// Build compose project
+	project := buildComposeProject(dataDir)
+
 	logConfig := dockerutil.LogConfig{
 		Prefix:      manager.projectName,
 		ShowService: true,
@@ -123,7 +171,7 @@ func NewManager(ctx context.Context, opts ...ManagerOption) (*IchiranManager, er
 	}
 
 	logger := dockerutil.NewContainerLogConsumer(logConfig)
-	
+
 	// Set up progress tracking if handler provided
 	if manager.progressHandler != nil {
 		logger.ProgressHandler = manager.progressHandler
@@ -132,8 +180,7 @@ func NewManager(ctx context.Context, opts ...ManagerOption) (*IchiranManager, er
 
 	cfg := dockerutil.Config{
 		ProjectName:      manager.projectName,
-		ComposeFile:      "docker-compose.yml",
-		RemoteRepo:       remote,
+		Project:          project,
 		RequiredServices: []string{"main", "pg"},
 		LogConsumer:      logger,
 		Timeout: dockerutil.Timeout{
@@ -141,6 +188,7 @@ func NewManager(ctx context.Context, opts ...ManagerOption) (*IchiranManager, er
 			Recreate: 25 * time.Minute,
 			Start:    60 * time.Second,
 		},
+		OnPullProgress: manager.downloadProgressCallback,
 	}
 
 	dockerManager, err := dockerutil.NewDockerManager(ctx, cfg)
@@ -150,7 +198,7 @@ func NewManager(ctx context.Context, opts ...ManagerOption) (*IchiranManager, er
 
 	manager.docker = dockerManager
 	manager.logger = logger
-	
+
 	return manager, nil
 }
 
@@ -167,12 +215,8 @@ func (im *IchiranManager) PullImages(ctx context.Context) error {
 	return dockerutil.PullImages(ctx, images, opts)
 }
 
-// Init initializes the docker service
+// Init initializes the docker service (pulls images and starts containers)
 func (im *IchiranManager) Init(ctx context.Context) error {
-	// Pre-pull images with progress tracking
-	if err := im.PullImages(ctx); err != nil {
-		return fmt.Errorf("failed to pull images: %w", err)
-	}
 	return im.docker.Init()
 }
 
