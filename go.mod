@@ -14,7 +14,7 @@ require (
 	github.com/k0kubun/pp v3.0.1+incompatible
 	github.com/rs/zerolog v1.33.0
 	github.com/stretchr/testify v1.11.0
-	github.com/tassa-yoniso-manasi-karoto/dockerutil v0.0.0-20251213064812-099d2ccb9e9b
+	github.com/tassa-yoniso-manasi-karoto/dockerutil v0.0.0-20251213085829-dbc92c54d932
 	github.com/tassa-yoniso-manasi-karoto/translitkit v0.0.0-20250322131331-7925e623934e
 	github.com/tidwall/pretty v1.2.1
 )
@@ -145,7 +145,6 @@ require (
 	github.com/prometheus/common v0.62.0 // indirect
 	github.com/prometheus/procfs v0.15.1 // indirect
 	github.com/rivo/uniseg v0.4.7 // indirect
-	github.com/rogpeppe/go-internal v1.14.1 // indirect
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.1 // indirect
 	github.com/secure-systems-lab/go-securesystemslib v0.6.0 // indirect
 	github.com/serialx/hashring v0.0.0-20200727003509-22c0c7ab6b1b // indirect
