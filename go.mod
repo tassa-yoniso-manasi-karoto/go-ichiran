@@ -14,7 +14,7 @@ require (
 	github.com/k0kubun/pp v3.0.1+incompatible
 	github.com/rs/zerolog v1.33.0
 	github.com/stretchr/testify v1.11.0
-	github.com/tassa-yoniso-manasi-karoto/dockerutil v0.0.0-20251213085829-dbc92c54d932
+	github.com/tassa-yoniso-manasi-karoto/dockerutil v0.0.0-20251214042449-2f026c45c028
 	github.com/tassa-yoniso-manasi-karoto/translitkit v0.0.0-20250322131331-7925e623934e
 	github.com/tidwall/pretty v1.2.1
 )

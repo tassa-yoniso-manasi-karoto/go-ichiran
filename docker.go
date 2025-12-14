@@ -115,8 +115,17 @@ func buildComposeProject(dataDir string) *types.Project {
 	pgdataDir := filepath.Join(dataDir, "pgdata")
 	os.MkdirAll(pgdataDir, 0755)
 
+	// Network name follows Docker Compose convention: {project}_{network}
+	defaultNetworkName := projectName + "_default"
+
 	return &types.Project{
 		Name: projectName,
+		// Default network for service communication
+		Networks: types.Networks{
+			"default": types.NetworkConfig{
+				Name: defaultNetworkName,
+			},
+		},
 		Services: types.Services{
 			"pg": {
 				Name:    "pg",
@@ -131,10 +140,18 @@ func buildComposeProject(dataDir string) *types.Project {
 					Source: pgdataDir,
 					Target: "/var/lib/postgresql/data",
 				}},
+				// Attach to default network
+				Networks: map[string]*types.ServiceNetworkConfig{
+					"default": nil,
+				},
 			},
 			"main": {
 				Name:  "main",
 				Image: ghcrImageMain,
+				// Attach to default network (can reach pg via hostname "pg")
+				Networks: map[string]*types.ServiceNetworkConfig{
+					"default": nil,
+				},
 			},
 		},
 	}
