@@ -54,6 +54,19 @@ func (token *JSONToken) applyCore(core jsonTokenCore) {
 // JSONTokens is a slice of token pointers representing a complete analysis result.
 type JSONTokens []*JSONToken
 
+// AnalysisResult wraps the primary analysis with optional alternative
+// segmentations returned when AnalyzeOptions.Limit > 1.
+type AnalysisResult struct {
+	Tokens       *JSONTokens            // Primary (highest-scoring) interpretation
+	Alternatives []ScoredInterpretation // Other segmentations, scored and deduplicated
+}
+
+// ScoredInterpretation is an alternative sentence segmentation with its score.
+type ScoredInterpretation struct {
+	Tokens JSONTokens
+	Score  int
+}
+
 // Gloss represents the English glosses and part of speech
 type Gloss struct {
 	Pos   string `json:"pos"`   // Part of speech
