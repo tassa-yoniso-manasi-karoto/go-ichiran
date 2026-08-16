@@ -360,8 +360,8 @@ github.com/stretchr/testify v1.8.0/go.mod h1:yNjHg4UonilssWZ8iaSj1OCr/vHnekPRkoO
 github.com/stretchr/testify v1.8.4/go.mod h1:sz/lmYIOXD/1dqDmKjjqLyZ2RngseejIcXlSw2iwfAo=
 github.com/stretchr/testify v1.11.1 h1:7s2iGBzp5EwR7/aIZr8ao5+dra3wiQyKjjFuvgVKu7U=
 github.com/stretchr/testify v1.11.1/go.mod h1:wZwfW3scLgRK+23gO65QZefKpKQRnfz6sD981Nm4B6U=
-github.com/tassa-yoniso-manasi-karoto/dockerutil v0.0.0-20260312023325-2253830d6704 h1:Glnmwo42UoGrTZajBfy+h/5MbPqwJGgiYeaJmzw4QxY=
-github.com/tassa-yoniso-manasi-karoto/dockerutil v0.0.0-20260312023325-2253830d6704/go.mod h1:zsmkYfK+MFzQpoOSAVcTRW7+KJcfPddV7qDbwsH/siA=
+github.com/tassa-yoniso-manasi-karoto/dockerutil v0.0.0-20260816082843-7b61cea3e0a2 h1:Gq1lEQwdy3LN2TQawlEPnLGBJKNR04keDNg/g2u/Jq0=
+github.com/tassa-yoniso-manasi-karoto/dockerutil v0.0.0-20260816082843-7b61cea3e0a2/go.mod h1:hnqCZquLPyq4reQL3nqM7jsJUdx+4wuRE5ug2lDN9eo=
 github.com/tassa-yoniso-manasi-karoto/translitkit v0.0.0-20251219122617-744329832b99 h1:T2MJvCgK9A9PVlt+h6GSkLr+qiN7nF+uGUX+T0rEQCo=
 github.com/tassa-yoniso-manasi-karoto/translitkit v0.0.0-20251219122617-744329832b99/go.mod h1:IYWyR0buAIWICbJ7ADMQPObZwquUurwTjaKmOrGw2e8=
 github.com/theupdateframework/go-tuf v0.7.0 h1:CqbQFrWo1ae3/I0UCblSbczevCCbS31Qvs5LdxRWqRI=

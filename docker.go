@@ -59,6 +59,7 @@ type IchiranManager struct {
 	logger                   *dockerutil.ContainerLogConsumer
 	projectName              string
 	containerName            string
+	containerNameExplicit    bool
 	QueryTimeout             time.Duration
 	progressHandler          dockerutil.ProgressHandler
 	downloadProgressCallback func(current, total int64, status string)
@@ -87,6 +88,7 @@ func WithProjectName(name string) ManagerOption {
 func WithContainerName(name string) ManagerOption {
 	return func(im *IchiranManager) {
 		im.containerName = name
+		im.containerNameExplicit = true
 	}
 }
 
@@ -110,7 +112,7 @@ func ptr(s string) *string {
 }
 
 // buildComposeProject creates the compose project definition for ichiran
-func buildComposeProject(dataDir string) *types.Project {
+func buildComposeProject(projectName, containerName, dataDir string) *types.Project {
 	// Ensure pgdata directory exists
 	pgdataDir := filepath.Join(dataDir, "pgdata")
 	os.MkdirAll(pgdataDir, 0755)
@@ -146,8 +148,9 @@ func buildComposeProject(dataDir string) *types.Project {
 				},
 			},
 			"main": {
-				Name:  "main",
-				Image: ghcrImageMain,
+				Name:          "main",
+				ContainerName: containerName,
+				Image:         ghcrImageMain,
 				// Attach to default network (can reach pg via hostname "pg")
 				Networks: map[string]*types.ServiceNetworkConfig{
 					"default": nil,
@@ -170,6 +173,29 @@ func NewManager(ctx context.Context, opts ...ManagerOption) (*IchiranManager, er
 		opt(manager)
 	}
 
+	var projectLease *dockerutil.ProjectLease
+	managerReady := false
+	defer func() {
+		if projectLease != nil && !managerReady {
+			_ = projectLease.Release(ctx)
+		}
+	}()
+	if runtime := dockerutil.RuntimeFromContext(ctx); runtime != nil {
+		lease, err := runtime.AcquireProject(ctx, dockerutil.ProjectSpec{
+			BaseName:  manager.projectName,
+			Kind:      "ichiran",
+			Lifecycle: dockerutil.LifecycleShared,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("acquire Ichiran project: %w", err)
+		}
+		projectLease = lease
+		manager.projectName = lease.Name()
+		if !manager.containerNameExplicit {
+			manager.containerName = ""
+		}
+	}
+
 	// Get XDG data directory for ichiran
 	dataDir := filepath.Join(xdg.ConfigHome, manager.projectName)
 	if err := os.MkdirAll(dataDir, 0755); err != nil {
@@ -177,7 +203,7 @@ func NewManager(ctx context.Context, opts ...ManagerOption) (*IchiranManager, er
 	}
 
 	// Build compose project
-	project := buildComposeProject(dataDir)
+	project := buildComposeProject(manager.projectName, manager.containerName, dataDir)
 
 	logConfig := dockerutil.LogConfig{
 		Prefix:      manager.projectName,
@@ -196,8 +222,8 @@ func NewManager(ctx context.Context, opts ...ManagerOption) (*IchiranManager, er
 	}
 
 	cfg := dockerutil.Config{
-		ProjectName:      manager.projectName,
 		Project:          project,
+		ProjectLease:     projectLease,
 		RequiredServices: []string{"main", "pg"},
 		LogConsumer:      logger,
 		Timeout: dockerutil.Timeout{
@@ -215,6 +241,7 @@ func NewManager(ctx context.Context, opts ...ManagerOption) (*IchiranManager, er
 
 	manager.docker = dockerManager
 	manager.logger = logger
+	managerReady = true
 
 	return manager, nil
 }
@@ -234,20 +261,39 @@ func (im *IchiranManager) PullImages(ctx context.Context) error {
 
 // Init initializes the docker service (pulls images and starts containers)
 func (im *IchiranManager) Init(ctx context.Context) error {
-	return im.docker.Init()
+	if err := im.docker.Init(); err != nil {
+		return err
+	}
+	return im.resolveContainer(ctx)
 }
 
 // InitQuiet initializes the docker service with reduced logging
 func (im *IchiranManager) InitQuiet(ctx context.Context) error {
-	return im.docker.InitQuiet()
+	if err := im.docker.InitQuiet(); err != nil {
+		return err
+	}
+	return im.resolveContainer(ctx)
 }
 
 // InitRecreate remove existing containers then builds and up the containers
 func (im *IchiranManager) InitRecreate(ctx context.Context, noCache bool) error {
 	if noCache {
-		return im.docker.InitRecreateNoCache()
+		if err := im.docker.InitRecreateNoCache(); err != nil {
+			return err
+		}
+	} else if err := im.docker.InitRecreate(); err != nil {
+		return err
 	}
-	return im.docker.InitRecreate()
+	return im.resolveContainer(ctx)
+}
+
+func (im *IchiranManager) resolveContainer(ctx context.Context) error {
+	containerID, err := im.docker.ContainerID(ctx, "main")
+	if err != nil {
+		return fmt.Errorf("resolve Ichiran container: %w", err)
+	}
+	im.containerName = containerID
+	return nil
 }
 
 // MustInit initializes the docker service and panics on error
@@ -259,13 +305,18 @@ func (im *IchiranManager) MustInit(ctx context.Context) {
 
 // Stop stops the docker service
 func (im *IchiranManager) Stop(ctx context.Context) error {
-	return im.docker.Stop()
+	return im.docker.StopWithContext(ctx)
 }
 
 // Close implements io.Closer
 func (im *IchiranManager) Close() error {
+	return im.CloseWithContext(context.Background())
+}
+
+// CloseWithContext releases the manager's shared Docker lease with a context.
+func (im *IchiranManager) CloseWithContext(ctx context.Context) error {
 	im.logger.Close()
-	return im.docker.Close()
+	return im.docker.CloseWithContext(ctx)
 }
 
 // Status returns the current status of the project
@@ -366,12 +417,17 @@ func Status() (string, error) {
 
 // Close implements io.Closer (backward compatibility)
 func Close() error {
+	return CloseWithContext(context.Background())
+}
+
+// CloseWithContext closes the default manager with a context.
+func CloseWithContext(ctx context.Context) error {
 	mu.Lock()
 	defer mu.Unlock()
 	
 	if instance != nil {
 		instance.logger.Close()
-		err := instance.docker.Close()
+		err := instance.docker.CloseWithContext(ctx)
 		// Mark the instance as closed
 		instanceClosed = true
 		return err
