@@ -27,6 +27,12 @@ type JSONToken struct {
 	Start        *int          `json:"start,omitempty"`        // Half-open start position (nullable: absent ≠ 0)
 	End          *int          `json:"end,omitempty"`          // Half-open end position (nullable: absent ≠ 0)
 	LexicalType  string        `json:"type,omitempty"`         // Ichiran's word type (KANA, KANJI, etc.)
+
+	// G2: Root resolution results — resolved dictionary roots for this leaf.
+	RootCandidates []RootCandidate `json:"rootCandidates,omitempty"`
+	// Positionless compound children share their parent's span, not its identity.
+	SpanInherited bool  `json:"spanInherited,omitempty"`
+	ComponentPath []int `json:"componentPath,omitempty"`
 }
 
 // ConjSelector identifies which conjugation branch was selected for this
@@ -105,7 +111,16 @@ func cloneJSONTokens(tokens []JSONToken) []JSONToken {
 		out[i].Components = cloneJSONTokens(t.Components)
 		out[i].Alternative = cloneJSONTokens(t.Alternative)
 		out[i].Compound = slices.Clone(t.Compound)
+		out[i].ComponentPath = slices.Clone(t.ComponentPath)
 		out[i].KanjiReadings = slices.Clone(t.KanjiReadings)
+		if t.RootCandidates != nil {
+			rc := make([]RootCandidate, len(t.RootCandidates))
+			for j, c := range t.RootCandidates {
+				rc[j] = c
+				rc[j].Gloss = slices.Clone(c.Gloss)
+			}
+			out[i].RootCandidates = rc
+		}
 		out[i].Raw = slices.Clone(t.Raw)
 		if t.ConjSelector != nil {
 			cs := *t.ConjSelector
@@ -147,6 +162,16 @@ func (token *JSONToken) selectCandidate(src *JSONToken) {
 	token.Components = cloneJSONTokens(src.Components)
 	token.Compound = slices.Clone(src.Compound)
 	token.KanjiReadings = slices.Clone(src.KanjiReadings)
+	if src.RootCandidates != nil {
+		rc := make([]RootCandidate, len(src.RootCandidates))
+		for j, c := range src.RootCandidates {
+			rc[j] = c
+			rc[j].Gloss = slices.Clone(c.Gloss)
+		}
+		token.RootCandidates = rc
+	} else {
+		token.RootCandidates = nil
+	}
 	token.TrueText = src.TrueText
 	if src.ConjSelector != nil {
 		cs := *src.ConjSelector
@@ -247,4 +272,81 @@ func intPtr(v int) *int {
 // boolPtr returns a pointer to the given bool value.
 func boolPtr(v bool) *bool {
 	return &v
+}
+
+// ===========================================================================
+// G2: Structured Document Analysis Envelope
+// ===========================================================================
+
+// DocumentInput is the input for AnalyzeDocument. Each fragment has an
+// integer ID and source text to be analyzed. Fragments are processed in
+// order; IDs are echoed in results for correlation.
+type DocumentInput struct {
+	Fragments []FragmentInput
+}
+
+// FragmentInput is a single piece of text to analyze. ID is user-assigned
+// and carried through to FragmentResult for correlation.
+type FragmentInput struct {
+	ID   int
+	Text string
+}
+
+// DocumentOptions configures the AnalyzeDocument call.
+type DocumentOptions struct {
+	// Limit controls how many interpretation candidates ichiran returns
+	// per word segment. Default is 5.
+	Limit int
+}
+
+// DocumentResult is the versioned output envelope from AnalyzeDocument.
+type DocumentResult struct {
+	AdapterVersion int              `json:"adapterVersion"`
+	Fragments      []FragmentResult `json:"fragments"`
+	Warnings       []string         `json:"warnings,omitempty"`
+}
+
+// FragmentResult is one analyzed fragment in the document envelope.
+type FragmentResult struct {
+	ID           int             `json:"id"`
+	SourceText   string          `json:"sourceText"`
+	AnalysisText string          `json:"analysisText"`
+	Segments     []SegmentResult `json:"segments"`
+}
+
+// SegmentKind distinguishes word segments from literal (punctuation/whitespace).
+type SegmentKind string
+
+const (
+	SegmentWord    SegmentKind = "word"
+	SegmentLiteral SegmentKind = "literal"
+)
+
+// SegmentResult is one segment produced by basic-split. Literal segments
+// have no interpretations; word segments have one or more.
+type SegmentResult struct {
+	Index           int                    `json:"index"`
+	Kind            SegmentKind            `json:"kind"`
+	Start           int                    `json:"start"`
+	End             int                    `json:"end"`
+	Text            string                 `json:"text"`
+	Interpretations []InterpretationResult `json:"interpretations,omitempty"`
+}
+
+// InterpretationResult is one possible analysis of a word segment.
+// Each contains a score and the self-contained enriched tokens.
+type InterpretationResult struct {
+	Score  int          `json:"score"`
+	Tokens []*JSONToken `json:"tokens"`
+}
+
+// RootCandidate is a dictionary root resolved from a conjugated/inflected
+// occurrence. Each candidate has a verified dictionary Seq, canonical lemma,
+// dictionary kana, and POS/gloss data. Multiple candidates represent
+// alternative dictionary entries, not words in a compound.
+type RootCandidate struct {
+	DictionarySeq int     `json:"dictionarySeq"`
+	Lemma         string  `json:"lemma"`
+	Kana          string  `json:"kana"`
+	Gloss         []Gloss `json:"gloss,omitempty"`
 }
