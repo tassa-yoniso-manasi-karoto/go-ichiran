@@ -10,7 +10,7 @@ func TestTokenizedMethods(t *testing.T) {
 	tokens := createTestTokens()
 
 	t.Run("Tokenized", func(t *testing.T) {
-		expected := "私 は 日本語 を 勉強して います 。"
+		expected := "私 は 日本語 を 勉強して います。"
 		result := tokens.Tokenized()
 		assert.Equal(t, expected, result)
 	})
@@ -42,7 +42,7 @@ func TestRomanMethods(t *testing.T) {
 	tokens := createTestTokens()
 
 	t.Run("Roman", func(t *testing.T) {
-		expected := "watashi wa nihongo wo benkyou shite imasu 。"
+		expected := "watashi wa nihongo wo benkyou shite imasu。"
 		result := tokens.Roman()
 		assert.Equal(t, expected, result)
 	})

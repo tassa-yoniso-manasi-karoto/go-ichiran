@@ -7,7 +7,6 @@ import (
 	"strings"
 	"unicode"
 
-	"al.essio.dev/pkg/shellescape"
 	"github.com/gookit/color"
 	"github.com/k0kubun/pp"
 	"github.com/robpike/nihongo"
@@ -26,6 +25,26 @@ type AnalyzeOptions struct {
 	// With Limit>1, multiple alternative segmentations are returned, each
 	// representing a different way to parse the input text.
 	Limit int
+}
+
+// escapeLispString escapes a string for embedding inside a Common Lisp
+// double-quoted string literal. Only backslash and double-quote need
+// escaping in CL strings. Everything else — semicolons, newlines, tabs,
+// apostrophes, leading hyphens — survives literally.
+func escapeLispString(s string) string {
+	var b strings.Builder
+	b.Grow(len(s) + 16)
+	for _, r := range s {
+		switch r {
+		case '\\':
+			b.WriteString(`\\`)
+		case '"':
+			b.WriteString(`\"`)
+		default:
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
 }
 
 // Analyze performs a single call to get morphological analysis, kanji-kana mappings,
@@ -67,41 +86,21 @@ func (im *IchiranManager) AnalyzeWithOptions(ctx context.Context, text string, o
 		return nil, fmt.Errorf("container %s is not running", im.containerName)
 	}
 
-	// Load the optimized Lisp snippet and replace the placeholder
-	lispCode := fmt.Sprintf(`(progn
-    (ql:quickload :jsown :silent t)
+	// Build the Lisp expression with proper CL string escaping.
+	// Escape only backslash and double-quote for CL string literals;
+	// semicolons, newlines, tabs and other characters survive literally.
+	escapedText := escapeLispString(text)
 
-    (defmethod jsown:to-json ((word-info ichiran/dict::word-info))
-      (let* ((gloss-json (handler-case
-                            (ichiran::word-info-gloss-json word-info)
-                          (error (e) (declare (ignore e)) nil)))
-             (match-json (handler-case
-                            (ichiran/kanji:match-readings-json
-                              (slot-value word-info (quote ichiran/dict::text))
-                              (slot-value word-info (quote ichiran/dict::kana)))
-                          (error (e) (declare (ignore e)) nil)))
+	lispExpr := fmt.Sprintf(`(progn (ql:quickload :jsown :silent t) (defmethod jsown:to-json ((word-info ichiran/dict::word-info)) (let* ((gloss-json (handler-case (ichiran::word-info-gloss-json word-info) (error (e) (declare (ignore e)) nil))) (match-json (handler-case (ichiran/kanji:match-readings-json (slot-value word-info (quote ichiran/dict::text)) (slot-value word-info (quote ichiran/dict::kana))) (error (e) (declare (ignore e)) nil))) (word-json (ichiran::word-info-json word-info))) (when gloss-json (jsown:extend-js word-json ("gloss" gloss-json))) (when match-json (jsown:extend-js word-json ("match" match-json))) (jsown:to-json word-json))) (jsown:to-json (ichiran::romanize* "%s" :limit %d)))`,
+		escapedText, limit)
 
-             (word-json (ichiran::word-info-json word-info)))
-
-        (when gloss-json
-          (jsown:extend-js word-json ("gloss" gloss-json)))
-
-        (when match-json
-          (jsown:extend-js word-json ("match" match-json)))
-
-        (jsown:to-json word-json)))
-
-    (jsown:to-json (ichiran::romanize* "%s" :limit %d)))`, text, limit)
-
-	// Remove Lisp comments and clean up the code for the shell command
-	lispCode = cleanLispCode(lispCode)
-
-	// Prepare command
-	execCommand := fmt.Sprintf("ichiran-cli -e '%s'", lispCode)
+	// Pass ichiran-cli and its arguments directly, without bash -c.
+	// This avoids shell interpretation of the Lisp code and the subtitle
+	// text embedded in it.
 	cmd := []string{
-		"bash",
-		"-c",
-		execCommand,
+		"ichiran-cli",
+		"-e",
+		lispExpr,
 	}
 
 	// Create execution config
@@ -177,50 +176,11 @@ func Analyze(text string) (*JSONTokens, error) {
 }
 
 // safe escapes special characters in the input text for shell command usage.
+// NOTE: Retained for existing callers outside ichiran.go (selective.go etc.).
+// The analysis path no longer uses this — see escapeLispString instead.
 func safe(s string) string {
-	s = shellescape.Quote(s)
-	//s = strings.ReplaceAll(s, "\"", "\\\"")
 	// leading "-" causes the string to be identified by the CLI as a serie of short flags
 	return strings.TrimPrefix(s, "-")
-}
-
-// decodeToken processes Unicode escapes and other encodings in token fields.
-func decodeToken(token *JSONToken) error {
-	var err error
-	if token.Surface, err = unescapeUnicodeString(token.Surface); err != nil {
-		Logger.Debug().Err(err).Msgf("failed to decode Surface: %s", token.Surface)
-		return fmt.Errorf("failed to decode Surface: %w", err)
-	}
-	if token.Reading, err = unescapeUnicodeString(token.Reading); err != nil {
-		Logger.Debug().Err(err).Msgf("failed to decode Reading: %s", token.Reading)
-		return fmt.Errorf("failed to decode Reading: %w", err)
-	}
-	if token.Kana, err = unescapeUnicodeString(token.Kana); err != nil {
-		Logger.Debug().Err(err).Msgf("failed to decode Kana: %s", token.Kana)
-		return fmt.Errorf("failed to decode Kana: %w", err)
-	}
-
-	return nil
-}
-
-// unescapeUnicodeString converts Unicode escapes (\uXXXX) to actual characters
-func unescapeUnicodeString(s string) (string, error) {
-	// Kana field can contain a forbidden jutsu: \u200c = ZERO WIDTH NON-JOINER
-	// however it is (apparently) automatically rendered by JSON decoder from its codepoint into a literal in Go
-	// so it must replaced manually.
-	s = strings.ReplaceAll(s /*ZERO WIDTH NON-JOINER*/, "‌", "")
-	// If the string doesn't contain any \u, return as is
-	if !strings.Contains(s, "\\u") {
-		return s, nil
-	}
-
-	// Add quotes and decode as JSON string which handles Unicode escapes
-	quoted := `"` + strings.Replace(s, `"`, `\"`, -1) + `"`
-	var unquoted string
-	if err := json.Unmarshal([]byte(quoted), &unquoted); err != nil {
-		return "", fmt.Errorf("failed to unescape Unicode: %w", err)
-	}
-	return unquoted, nil
 }
 
 func stringCapLen(s string, max int) string {
@@ -250,7 +210,8 @@ func parseGlossEntry(glossMap map[string]interface{}) Gloss {
 	return gloss
 }
 
-// parseConjugation extracts a Conj from a raw JSON map.
+// parseConjugation extracts a Conj from a raw JSON map, including recursive
+// via chains and the fml (formal) flag.
 func parseConjugation(conjMap map[string]interface{}) Conj {
 	conj := Conj{}
 	if reading, ok := conjMap["reading"].(string); ok {
@@ -258,6 +219,9 @@ func parseConjugation(conjMap map[string]interface{}) Conj {
 	}
 	if readOk, ok := conjMap["readok"].(bool); ok {
 		conj.ReadOk = readOk
+	}
+	if fml, ok := conjMap["fml"].(bool); ok {
+		conj.Fml = fml
 	}
 	if propData, ok := conjMap["prop"].([]interface{}); ok {
 		for _, p := range propData {
@@ -272,6 +236,9 @@ func parseConjugation(conjMap map[string]interface{}) Conj {
 				if neg, ok := propMap["neg"].(bool); ok {
 					prop.Neg = neg
 				}
+				if fml, ok := propMap["fml"].(bool); ok {
+					prop.Fml = fml
+				}
 				conj.Prop = append(conj.Prop, prop)
 			}
 		}
@@ -283,74 +250,15 @@ func parseConjugation(conjMap map[string]interface{}) Conj {
 			}
 		}
 	}
+	// Recurse through via entries, preserving all siblings
+	if viaEntries, ok := conjMap["via"].([]interface{}); ok {
+		for _, v := range viaEntries {
+			if viaMap, ok := v.(map[string]interface{}); ok {
+				conj.Via = append(conj.Via, parseConjugation(viaMap))
+			}
+		}
+	}
 	return conj
-}
-
-// parseReadingAlternatives extracts alternative readings from a word that
-// has "alternative": true. The alternatives come from gloss.alternative
-// which has rich reading/gloss/conjugation info for each possible reading.
-func parseReadingAlternatives(wordData map[string]interface{}) []JSONToken {
-	glossData, ok := wordData["gloss"].(map[string]interface{})
-	if !ok {
-		return nil
-	}
-
-	altData, ok := glossData["alternative"].([]interface{})
-	if !ok {
-		return nil
-	}
-
-	var alternatives []JSONToken
-	for _, alt := range altData {
-		altMap, ok := alt.(map[string]interface{})
-		if !ok {
-			continue
-		}
-
-		altToken := JSONToken{IsLexical: true}
-		if text, ok := altMap["text"].(string); ok {
-			altToken.Surface = text
-		}
-		if kana, ok := altMap["kana"].(string); ok {
-			altToken.Kana = kana
-		}
-		if reading, ok := altMap["reading"].(string); ok {
-			altToken.Reading = reading
-		}
-		if score, ok := altMap["score"].(float64); ok {
-			altToken.Score = int(score)
-		}
-		if seq, ok := altMap["seq"].(float64); ok {
-			altToken.Seq = int(seq)
-		}
-
-		// Parse conjugation info
-		if conjData, ok := altMap["conj"].([]interface{}); ok {
-			for _, c := range conjData {
-				if conjMap, ok := c.(map[string]interface{}); ok {
-					altToken.Conj = append(altToken.Conj, parseConjugation(conjMap))
-				}
-			}
-		}
-
-		// Parse direct glosses
-		if glossEntries, ok := altMap["gloss"].([]interface{}); ok {
-			for _, g := range glossEntries {
-				if glossMap, ok := g.(map[string]interface{}); ok {
-					altToken.Gloss = append(altToken.Gloss, parseGlossEntry(glossMap))
-				}
-			}
-		}
-
-		if err := decodeToken(&altToken); err != nil {
-			Logger.Debug().Err(err).Msg("failed to decode alternative token")
-			continue
-		}
-		repairRomajiFromKana(&altToken)
-		alternatives = append(alternatives, altToken)
-	}
-
-	return alternatives
 }
 
 func containsJapaneseScript(s string) bool {
@@ -373,13 +281,6 @@ func containsLatinLetter(s string) bool {
 
 // repairRomajiFromKana backfills token.Romaji from token.Kana when ichiran did
 // not provide a usable Latin romanization for this token.
-//
-// This fallback exists because ichiran's richer analysis can legitimately give
-// us the correct reading in Kana while the romaji slot is still missing,
-// slash-packed at the parent word level, or even left as raw Japanese text in
-// some lower-ranked sentence interpretations. LangKit's disambiguation logic
-// selects readings, so after the reading is chosen we need a deterministic way
-// to keep the romanized output aligned without asking an LLM to invent it.
 func repairRomajiFromKana(token *JSONToken) {
 	if token == nil || token.Kana == "" {
 		return
@@ -388,48 +289,133 @@ func repairRomajiFromKana(token *JSONToken) {
 	if romaji != "" && !containsJapaneseScript(romaji) && containsLatinLetter(romaji) {
 		return
 	}
-
-	token.Romaji = strings.TrimSpace(nihongo.RomajiString(token.Kana))
+	// Strip ZWNJ only for romaji derivation — do not modify the stored Kana.
+	kana := strings.ReplaceAll(token.Kana, "\u200c", "")
+	token.Romaji = strings.TrimSpace(nihongo.RomajiString(kana))
 }
 
-// parseWordEntry parses a single word entry from ichiran's JSON output
-// into a JSONToken. A word entry has the format ["romaji", {word data}, []].
-func parseWordEntry(wordSlice []interface{}) (*JSONToken, error) {
-	if len(wordSlice) < 2 {
-		return nil, fmt.Errorf("word entry too short: %d elements", len(wordSlice))
+// parseKanjiReadings extracts kanji-kana mapping from match data.
+// Strings are used as-is from json.Unmarshal — no second decode pass.
+func parseKanjiReadings(matchData []interface{}) []KanjiReading {
+	var readings []KanjiReading
+	for _, m := range matchData {
+		matchMap, ok := m.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		reading := KanjiReading{}
+		if kanji, ok := matchMap["kanji"].(string); ok {
+			reading.Kanji = kanji
+		}
+		if kana, ok := matchMap["reading"].(string); ok {
+			reading.Reading = kana
+		}
+		if readingType, ok := matchMap["type"].(string); ok {
+			reading.Type = readingType
+		}
+		if link, ok := matchMap["link"].(bool); ok {
+			reading.Link = link
+		}
+		if gem, ok := matchMap["geminated"].(string); ok {
+			reading.Geminated = gem
+		}
+		if stats, ok := matchMap["stats"].(bool); ok {
+			reading.Stats = stats
+		}
+		if sample, ok := matchMap["sample"].(float64); ok {
+			reading.Sample = int(sample)
+		}
+		if total, ok := matchMap["total"].(float64); ok {
+			reading.Total = int(total)
+		}
+		if perc, ok := matchMap["perc"].(string); ok {
+			reading.Perc = perc
+		}
+		if grade, ok := matchMap["grade"].(float64); ok {
+			reading.Grade = int(grade)
+		}
+		readings = append(readings, reading)
 	}
+	return readings
+}
 
-	wordData, ok := wordSlice[1].(map[string]interface{})
-	if !ok {
-		return nil, fmt.Errorf("invalid word data type: %T", wordSlice[1])
+// parseCounterData extracts counter data from the two wire formats:
+// structural [value, ordinal] array and rich {value, ordinal} object.
+func parseCounterData(v interface{}) *CounterData {
+	switch cv := v.(type) {
+	case []interface{}:
+		cd := &CounterData{}
+		if len(cv) >= 1 {
+			if val, ok := cv[0].(string); ok {
+				cd.Value = val
+			}
+		}
+		if len(cv) >= 2 {
+			if ord, ok := cv[1].(bool); ok {
+				cd.Ordinal = ord
+			}
+		}
+		return cd
+	case map[string]interface{}:
+		cd := &CounterData{}
+		if val, ok := cv["value"].(string); ok {
+			cd.Value = val
+		}
+		if ord, ok := cv["ordinal"].(bool); ok {
+			cd.Ordinal = ord
+		}
+		return cd
 	}
+	return nil
+}
 
-	token := &JSONToken{
-		IsLexical: true,
+// parseWordNode is the single recursive parser for normal words, compound
+// children, and alternative candidates. It extracts all fields from wordData,
+// optionally enriching with externalGloss when the caller has paired this
+// node with a rich gloss source.
+//
+// Parameters:
+//   - wordData: the structural word-data map (from a word entry, structural
+//     component, or a rich alternative used as the sole source).
+//   - parentRomaji: romaji from the parent word-entry tuple (empty for children).
+//   - externalGloss: optional rich gloss (from parent's gloss.components or
+//     gloss.alternative) that enriches this node's reading/gloss/conj/match.
+//     Correspondence is validated here; mismatch is an error.
+//   - inheritedType: parent's lexical type, used when wordData has no own type.
+func parseWordNode(wordData map[string]interface{}, parentRomaji string, externalGloss map[string]interface{}, inheritedType string) (*JSONToken, error) {
+	token := &JSONToken{}
+
+	// --- 1. Type determination ---
+	tokenType, typeOk := wordData["type"].(string)
+	if !typeOk {
+		tokenType = inheritedType
 	}
-
-	// Extract the type - determines if lexical or not
-	tokenType, _ := wordData["type"].(string)
+	token.LexicalType = tokenType
 	switch tokenType {
 	case "KANA", "KANJI":
 		token.IsLexical = true
+	case "":
+		token.IsLexical = true // assume lexical when type absent
 	default:
 		token.IsLexical = false
 	}
 
-	// Extract basic fields
+	// --- 2. Basic fields ---
 	if text, ok := wordData["text"].(string); ok {
 		token.Surface = text
 	}
+	if truetext, ok := wordData["truetext"].(string); ok {
+		token.TrueText = truetext
+	}
 
-	// kana can be a string or an array of strings (when alternative: true)
-	switch kanaVal := wordData["kana"].(type) {
+	// kana: string for normal, array for alternative=true parent (NOT zipped!)
+	switch kv := wordData["kana"].(type) {
 	case string:
-		token.Kana = kanaVal
+		token.Kana = kv
 	case []interface{}:
-		if len(kanaVal) > 0 {
-			if firstKana, ok := kanaVal[0].(string); ok {
-				token.Kana = firstKana
+		if len(kv) > 0 {
+			if s, ok := kv[0].(string); ok {
+				token.Kana = s
 			}
 		}
 	}
@@ -438,201 +424,387 @@ func parseWordEntry(wordSlice []interface{}) (*JSONToken, error) {
 		token.Score = int(score)
 	}
 
-	// seq can be a number or an array of numbers (when alternative: true)
-	switch seqVal := wordData["seq"].(type) {
+	// seq: number or array (NOT zipped with kana)
+	switch sv := wordData["seq"].(type) {
 	case float64:
-		token.Seq = int(seqVal)
+		token.Seq = int(sv)
 	case []interface{}:
-		if len(seqVal) > 0 {
-			if firstSeq, ok := seqVal[0].(float64); ok {
-				token.Seq = int(firstSeq)
+		if len(sv) > 0 {
+			if s, ok := sv[0].(float64); ok {
+				token.Seq = int(s)
 			}
 		}
 	}
 
-	// Get romanized form - usually in position 0 of the entry
-	if romaji, ok := wordSlice[0].(string); ok {
-		token.Romaji = romaji
+	token.Romaji = parentRomaji
+
+	// --- 3. Nullable positions ---
+	if v, ok := wordData["start"].(float64); ok {
+		token.Start = intPtr(int(v))
+	}
+	if v, ok := wordData["end"].(float64); ok {
+		token.End = intPtr(int(v))
 	}
 
-	// Check if this word has alternative readings
-	isAlternative, _ := wordData["alternative"].(bool)
+	// --- 4. Primary flag ---
+	if v, ok := wordData["primary"].(bool); ok {
+		token.IsPrimary = boolPtr(v)
+	}
 
-	// Extract the reading from the gloss if available
-	if glossData, ok := wordData["gloss"].(map[string]interface{}); ok {
-		if !isAlternative {
-			// Normal word: reading and glosses are at the top level of gloss
-			if reading, ok := glossData["reading"].(string); ok {
-				token.Reading = reading
+	// --- 5. Counter: structural [value, ordinal] or object {value, ordinal} ---
+	if cv, exists := wordData["counter"]; exists {
+		token.CounterData = parseCounterData(cv)
+	}
+
+	// --- 6. Conjugation selector: "ROOT" string or array of IDs ---
+	switch cv := wordData["conjugations"].(type) {
+	case string:
+		if cv == "ROOT" {
+			token.ConjSelector = &ConjSelector{IsRoot: true}
+		}
+	case []interface{}:
+		var ids []int
+		for _, c := range cv {
+			if cID, ok := c.(float64); ok {
+				ids = append(ids, int(cID))
 			}
-			if glossEntries, ok := glossData["gloss"].([]interface{}); ok {
-				for _, g := range glossEntries {
-					if glossMap, ok := g.(map[string]interface{}); ok {
-						token.Gloss = append(token.Gloss, parseGlossEntry(glossMap))
+		}
+		if len(ids) > 0 {
+			token.ConjSelector = &ConjSelector{IDs: ids}
+		}
+	}
+
+	// --- 7. Determine gloss source ---
+	// externalGloss (from parent's gloss.components/alternative) is authoritative
+	// when provided and correspondence holds. Otherwise use wordData's own gloss.
+	isAlternative, _ := wordData["alternative"].(bool)
+	ownGloss, _ := wordData["gloss"].(map[string]interface{})
+
+	var glossSource map[string]interface{}
+	if externalGloss != nil {
+		if !correspondenceValid(wordData, externalGloss) {
+			return nil, fmt.Errorf("structural/rich gloss correspondence mismatch for '%s'", token.Surface)
+		}
+		glossSource = externalGloss
+	} else {
+		glossSource = ownGloss
+	}
+
+	// --- 8. Reading, glosses, conjugations from gloss source ---
+	if glossSource != nil && !isAlternative {
+		if reading, ok := glossSource["reading"].(string); ok {
+			token.Reading = reading
+		}
+		if glossEntries, ok := glossSource["gloss"].([]interface{}); ok {
+			for _, g := range glossEntries {
+				if gm, ok := g.(map[string]interface{}); ok {
+					token.Gloss = append(token.Gloss, parseGlossEntry(gm))
+				}
+			}
+		}
+
+		// Conjugation: prefer gloss source's conj (authoritative). Only fall
+		// back to top-level conj when the gloss has no "conj" key at all.
+		if conjArray, conjKeyExists := glossSource["conj"]; conjKeyExists {
+			if conjEntries, ok := conjArray.([]interface{}); ok {
+				for _, c := range conjEntries {
+					if cm, ok := c.(map[string]interface{}); ok {
+						token.Conj = append(token.Conj, parseConjugation(cm))
+					}
+				}
+			}
+		} else {
+			// Legacy fallback: try top-level
+			if conjData, ok := wordData["conj"].([]interface{}); ok {
+				for _, c := range conjData {
+					if cm, ok := c.(map[string]interface{}); ok {
+						token.Conj = append(token.Conj, parseConjugation(cm))
 					}
 				}
 			}
 		}
-		// When isAlternative, the gloss object has an "alternative" array
-		// instead of direct reading/gloss. Handled below.
-	}
 
-	// Extract conjugation information if available
-	if conjData, ok := wordData["conj"].([]interface{}); ok {
-		for _, c := range conjData {
-			if conjMap, ok := c.(map[string]interface{}); ok {
-				token.Conj = append(token.Conj, parseConjugation(conjMap))
+		// Counter from gloss source (object format) as fallback
+		if token.CounterData == nil {
+			if cv, exists := glossSource["counter"]; exists {
+				token.CounterData = parseCounterData(cv)
+			}
+		}
+	} else if !isAlternative {
+		// Flat schema: reading, gloss, and conj live at wordData's top level
+		// rather than inside a gloss map. This covers rich alternative entries
+		// where "gloss" is a direct array and "reading" is a top-level string,
+		// as well as the legacy top-level conj fallback.
+		if reading, ok := wordData["reading"].(string); ok {
+			token.Reading = reading
+		}
+		if glossEntries, ok := wordData["gloss"].([]interface{}); ok {
+			for _, g := range glossEntries {
+				if gm, ok := g.(map[string]interface{}); ok {
+					token.Gloss = append(token.Gloss, parseGlossEntry(gm))
+				}
+			}
+		}
+		if conjData, ok := wordData["conj"].([]interface{}); ok {
+			for _, c := range conjData {
+				if cm, ok := c.(map[string]interface{}); ok {
+					token.Conj = append(token.Conj, parseConjugation(cm))
+				}
 			}
 		}
 	}
 
-	// Extract kanji-kana mapping information if available
-	if matchData, ok := wordData["match"].([]interface{}); ok {
-		var readings []KanjiReading
-		for _, m := range matchData {
-			if matchMap, ok := m.(map[string]interface{}); ok {
-				reading := KanjiReading{}
-				if kanji, ok := matchMap["kanji"].(string); ok {
-					reading.Kanji = kanji
-				}
-				if kana, ok := matchMap["reading"].(string); ok {
-					reading.Reading = kana
-				}
-				if readingType, ok := matchMap["type"].(string); ok {
-					reading.Type = readingType
-				}
-				if link, ok := matchMap["link"].(bool); ok {
-					reading.Link = link
-				}
-				if gem, ok := matchMap["geminated"].(string); ok {
-					reading.Geminated = gem
-				}
-				if stats, ok := matchMap["stats"].(bool); ok {
-					reading.Stats = stats
-				}
-				if sample, ok := matchMap["sample"].(float64); ok {
-					reading.Sample = int(sample)
-				}
-				if total, ok := matchMap["total"].(float64); ok {
-					reading.Total = int(total)
-				}
-				if perc, ok := matchMap["perc"].(string); ok {
-					reading.Perc = perc
-				}
-				if grade, ok := matchMap["grade"].(float64); ok {
-					reading.Grade = int(grade)
-				}
-				readings = append(readings, reading)
-			}
+	// --- 9. Match data (kanji readings) ---
+	// Prefer gloss source, fall back to wordData directly.
+	if glossSource != nil {
+		if matchData, ok := glossSource["match"].([]interface{}); ok {
+			token.KanjiReadings = parseKanjiReadings(matchData)
 		}
-		for i := range readings {
-			readings[i].Kanji, _ = unescapeUnicodeString(readings[i].Kanji)
-			readings[i].Reading, _ = unescapeUnicodeString(readings[i].Reading)
+	}
+	if len(token.KanjiReadings) == 0 {
+		if matchData, ok := wordData["match"].([]interface{}); ok {
+			token.KanjiReadings = parseKanjiReadings(matchData)
 		}
-		token.KanjiReadings = readings
 	}
 
+	// --- 10. Alternatives or compounds ---
 	if isAlternative {
-		// Word has multiple possible readings — populate Alternative from
-		// the rich gloss.alternative data instead of treating components
-		// as compound parts.
-		token.Alternative = parseReadingAlternatives(wordData)
+		alts, altErr := parseAlternativeChildren(wordData, glossSource, tokenType)
+		if altErr != nil {
+			return nil, fmt.Errorf("failed to parse alternatives: %w", altErr)
+		}
+		token.Alternative = alts
 
-		// Distribute the combined romaji (e.g. "tometa/yameta") to
-		// individual alternatives. ichiran joins per-reading romaji
-		// with "/" at the word entry level.
+		// Romaji distribution (only when count matches)
 		if token.Romaji != "" && len(token.Alternative) > 0 {
-			romajiParts := strings.Split(token.Romaji, "/")
-			for i := range token.Alternative {
-				if i < len(romajiParts) {
-					token.Alternative[i].Romaji = strings.TrimSpace(romajiParts[i])
+			parts := strings.Split(token.Romaji, "/")
+			if len(parts) == len(token.Alternative) {
+				for i := range token.Alternative {
+					candidate := strings.TrimSpace(parts[i])
+					if candidate != "" {
+						token.Alternative[i].Romaji = candidate
+					}
 				}
 			}
 		}
-
-		// Per-alternative romaji is not always carried cleanly through ichiran's
-		// JSON. Normalize each reading here so later disambiguation can swap in a
-		// selected alternative without leaving Romaji empty or in Japanese script.
 		for i := range token.Alternative {
 			repairRomajiFromKana(&token.Alternative[i])
 		}
-		// Keep the primary token aligned with the first alternative because the
-		// rest of LangKit treats the primary fields as the currently selected
-		// reading until disambiguation chooses a different one.
-		if len(token.Alternative) > 0 {
-			token.Romaji = token.Alternative[0].Romaji
-		}
 
-		// Use the first alternative's data for the primary token fields
-		// when they weren't already set from the main word data
-		if len(token.Alternative) > 0 && token.Reading == "" {
-			token.Reading = token.Alternative[0].Reading
+		// Initialize from candidate 0 — deep-copies all fields
+		if len(token.Alternative) > 0 {
+			first := token.Alternative[0]
+			token.selectCandidate(&first)
 		}
+		// Surface stays as parent's raw text (selectCandidate doesn't copy it)
 	} else {
-		// Normal compound components (e.g. 一方通行 → 一方 + 通行)
 		if componentsData, ok := wordData["components"].([]interface{}); ok {
-			for _, comp := range componentsData {
-				if compMap, ok := comp.(map[string]interface{}); ok {
-					component := JSONToken{}
-					if text, ok := compMap["text"].(string); ok {
-						component.Surface = text
-					}
-					if kana, ok := compMap["kana"].(string); ok {
-						component.Kana = kana
-					}
-					if reading, ok := compMap["reading"].(string); ok {
-						component.Reading = reading
-					}
-					if score, ok := compMap["score"].(float64); ok {
-						component.Score = int(score)
-					}
-					if glossData, ok := compMap["gloss"].(map[string]interface{}); ok {
-						if glossEntries, ok := glossData["gloss"].([]interface{}); ok {
-							for _, g := range glossEntries {
-								if glossMap, ok := g.(map[string]interface{}); ok {
-									component.Gloss = append(component.Gloss, parseGlossEntry(glossMap))
-								}
-							}
-						}
-					}
-					token.Components = append(token.Components, component)
+			var richComps []map[string]interface{}
+			if glossSource != nil {
+				richComps = getGlossComponents(glossSource)
+			}
+			for ci, comp := range componentsData {
+				compMap, ok := comp.(map[string]interface{})
+				if !ok {
+					return nil, fmt.Errorf("compound child %d is not a map: %T", ci, comp)
+				}
+				var rich map[string]interface{}
+				if ci < len(richComps) {
+					rich = richComps[ci]
+				}
+				// Recurse through the single parser
+				child, err := parseWordNode(compMap, "", rich, tokenType)
+				if err != nil {
+					return nil, fmt.Errorf("compound child %d: %w", ci, err)
+				}
+				token.Components = append(token.Components, *child)
+			}
+		}
+	}
+
+	repairRomajiFromKana(token)
+	return token, nil
+}
+
+// parseAlternativeChildren extracts alternative reading candidates by pairing
+// structural children (wordData.components when alternative=true) with their
+// rich gloss descriptions (glossSource.alternative). Each pair is parsed
+// through parseWordNode. When structural children are unavailable, the rich
+// alternative maps are parsed directly as the sole source.
+func parseAlternativeChildren(wordData map[string]interface{}, glossSource map[string]interface{}, parentType string) ([]JSONToken, error) {
+	// Collect structural children (the competing interpretations)
+	var structComps []map[string]interface{}
+	if compsRaw, ok := wordData["components"].([]interface{}); ok {
+		for _, c := range compsRaw {
+			if cMap, ok := c.(map[string]interface{}); ok {
+				structComps = append(structComps, cMap)
+			}
+		}
+	}
+
+	// Collect rich alternative descriptions
+	var richAlts []map[string]interface{}
+	if glossSource != nil {
+		if altData, ok := glossSource["alternative"].([]interface{}); ok {
+			for _, alt := range altData {
+				if altMap, ok := alt.(map[string]interface{}); ok {
+					richAlts = append(richAlts, altMap)
 				}
 			}
 		}
 	}
 
-	// Some sentence-level alternatives still surface the chosen reading in Kana
-	// while leaving the token's Romaji non-Latin or empty. Repairing it here
-	// keeps downstream Roman()/RomanParts() deterministic after disambiguation.
-	repairRomajiFromKana(token)
+	if len(structComps) > 0 {
+		// Prefer structural children enriched with rich gloss data
+		if len(richAlts) > 0 && len(structComps) != len(richAlts) {
+			return nil, fmt.Errorf("alternative structural/rich child count mismatch: %d structural vs %d rich", len(structComps), len(richAlts))
+		}
 
-	if err := decodeToken(token); err != nil {
-		return nil, fmt.Errorf("failed to decode token: %w", err)
+		var alternatives []JSONToken
+		for i, sc := range structComps {
+			var rich map[string]interface{}
+			if i < len(richAlts) {
+				rich = richAlts[i]
+			}
+			// Delegate to the single recursive parser
+			child, err := parseWordNode(sc, "", rich, parentType)
+			if err != nil {
+				return nil, fmt.Errorf("alternative child %d: %w", i, err)
+			}
+			alternatives = append(alternatives, *child)
+		}
+		return alternatives, nil
 	}
 
-	return token, nil
+	// Fallback: structural children unavailable — parse rich alternatives directly
+	if len(richAlts) == 0 {
+		return nil, nil
+	}
+
+	var alternatives []JSONToken
+	for i, richAlt := range richAlts {
+		// richAlt IS the wordData; no external enrichment
+		child, err := parseWordNode(richAlt, "", nil, parentType)
+		if err != nil {
+			return nil, fmt.Errorf("rich alternative %d: %w", i, err)
+		}
+		alternatives = append(alternatives, *child)
+	}
+	return alternatives, nil
+}
+
+// getGlossComponents extracts the rich gloss.components array when present.
+func getGlossComponents(glossData map[string]interface{}) []map[string]interface{} {
+	if glossData == nil {
+		return nil
+	}
+	comps, ok := glossData["components"].([]interface{})
+	if !ok {
+		return nil
+	}
+	var result []map[string]interface{}
+	for _, c := range comps {
+		if cMap, ok := c.(map[string]interface{}); ok {
+			result = append(result, cMap)
+		}
+	}
+	return result
+}
+
+// correspondenceValid checks whether a structural child and its rich gloss
+// component correspond by validating text, kana, and Seq agreement.
+func correspondenceValid(structural, rich map[string]interface{}) bool {
+	// If text is present on both, they must match
+	if sText, ok := structural["text"].(string); ok {
+		if rText, ok := rich["text"].(string); ok {
+			if sText != rText {
+				return false
+			}
+		}
+	}
+	// If kana is present on both as strings, they must match
+	if sKana, ok := structural["kana"].(string); ok {
+		if rKana, ok := rich["kana"].(string); ok {
+			if sKana != rKana {
+				return false
+			}
+		}
+	}
+	// If seq is present on both, they must match
+	if sSeq, ok := structural["seq"].(float64); ok {
+		if rSeq, ok := rich["seq"].(float64); ok {
+			if int(sSeq) != int(rSeq) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// parseWordEntry parses a single word entry from ichiran's JSON output
+// into a JSONToken. A word entry has the format ["romaji", {word data}, []].
+// Delegates to parseWordNode.
+func parseWordEntry(wordSlice []interface{}) (*JSONToken, error) {
+	if len(wordSlice) < 2 {
+		return nil, fmt.Errorf("word entry too short: %d elements", len(wordSlice))
+	}
+
+	romaji, ok := wordSlice[0].(string)
+	if !ok {
+		return nil, fmt.Errorf("word entry first element is not string: %T", wordSlice[0])
+	}
+
+	wordData, ok := wordSlice[1].(map[string]interface{})
+	if !ok {
+		return nil, fmt.Errorf("invalid word data type: %T", wordSlice[1])
+	}
+
+	return parseWordNode(wordData, romaji, nil, "")
 }
 
 // parseWordEntriesToTokens parses a list of raw word entries into JSONTokens.
+// Malformed structure errors are always returned alongside any valid tokens.
+// Valid whitespace and punctuation strings are preserved as content tokens.
 func parseWordEntriesToTokens(wordEntries []interface{}) (JSONTokens, error) {
 	var tokens JSONTokens
+	var parseErr error
 	for _, wordEntry := range wordEntries {
-		wordSlice, ok := wordEntry.([]interface{})
-		if !ok || len(wordSlice) < 2 {
+		// Plain strings (punctuation/whitespace) are content, not parse failures.
+		if s, ok := wordEntry.(string); ok {
+			punctToken := &JSONToken{
+				Surface:     s,
+				IsLexical:   false,
+				Reading:     s,
+				Kana:        s,
+				Romaji:      s,
+				LexicalType: "PUNCT",
+			}
+			tokens = append(tokens, punctToken)
 			continue
 		}
+
+		wordSlice, ok := wordEntry.([]interface{})
+		if !ok {
+			if parseErr == nil {
+				parseErr = fmt.Errorf("word entry is neither string nor array: %T", wordEntry)
+			}
+			continue
+		}
+
 		token, err := parseWordEntry(wordSlice)
 		if err != nil {
-			Logger.Debug().Err(err).Msg("skipping unparseable word entry")
+			if parseErr == nil {
+				parseErr = err
+			}
 			continue
 		}
 		tokens = append(tokens, token)
 	}
-	return tokens, nil
+	return tokens, parseErr
 }
 
 // parseAnalysis parses the JSON output from the enhanced Lisp snippet.
-// Returns only the primary (highest-scoring) interpretation.
+// Returns the primary (highest-scoring) interpretation and any parse error.
 func parseAnalysis(output []byte) (*JSONTokens, error) {
 	var rawData interface{}
 	if err := json.Unmarshal(output, &rawData); err != nil {
@@ -646,17 +818,17 @@ func parseAnalysis(output []byte) (*JSONTokens, error) {
 		return nil, fmt.Errorf("failed to extract words: %w", err)
 	}
 
-	tokens, err := parseWordEntriesToTokens(wordsArray)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse word entries: %w", err)
+	tokens, parseErr := parseWordEntriesToTokens(wordsArray)
+	if parseErr != nil && len(tokens) == 0 {
+		return nil, fmt.Errorf("failed to parse word entries: %w", parseErr)
 	}
 
-	return &tokens, nil
+	return &tokens, parseErr
 }
 
 // parseAnalysisFull parses all interpretations from ichiran output.
 // The primary (first) interpretation becomes Tokens; additional
-// interpretations are stored in Alternatives.
+// interpretations are stored in Alternatives. Parse errors propagate.
 func parseAnalysisFull(output []byte) (*AnalysisResult, error) {
 	// Always parse the primary interpretation via the existing path
 	primaryTokens, err := parseAnalysis(output)
@@ -681,8 +853,8 @@ func parseAnalysisFull(output []byte) (*AnalysisResult, error) {
 
 	// Parse alternative interpretations (skip the first, already parsed)
 	for i := 1; i < len(allInterps); i++ {
-		altTokens, err := parseWordEntriesToTokens(allInterps[i].words)
-		if err != nil {
+		altTokens, altErr := parseWordEntriesToTokens(allInterps[i].words)
+		if altErr != nil {
 			continue
 		}
 		result.Alternatives = append(result.Alternatives, ScoredInterpretation{
@@ -758,38 +930,22 @@ func extractAllInterpretations(data interface{}) ([]scoredWordEntries, error) {
 // extractWordsArray traverses the JSON structure to find all words and punctuation
 // from the primary (first) interpretation.
 func extractWordsArray(data interface{}) ([]interface{}, error) {
-	// First level is typically an array
 	outerArray, ok := data.([]interface{})
 	if !ok || len(outerArray) == 0 {
 		return nil, fmt.Errorf("expected outer array structure")
 	}
 
-	// We'll collect all entries (words and punctuation) here
 	var allEntries []interface{}
 
-	// Process the top-level array which contains a mix of nested word arrays and punctuation strings
 	for _, item := range outerArray {
-		// Check if this is a string (punctuation)
-		if punctStr, isPunct := item.(string); isPunct && strings.TrimSpace(punctStr) != "" {
-			// Create a token for punctuation
-			punctToken := []interface{}{
-				punctStr, // First element is the punctuation mark itself
-				map[string]interface{}{ // Second element is token metadata
-					"type":    "PUNCT",
-					"text":    punctStr,
-					"kana":    punctStr,
-					"reading": punctStr,
-				},
-				[]interface{}{}, // Third element (usually alternative forms) is empty
-			}
-			allEntries = append(allEntries, punctToken)
+		// Strings (punctuation/whitespace) are content
+		if _, isPunct := item.(string); isPunct {
+			allEntries = append(allEntries, item)
 			continue
 		}
 
-		// If not a punctuation string, it should be a nested array containing word data
 		nestedArray, isArray := item.([]interface{})
 		if !isArray {
-			// Skip anything that's not a string or array
 			continue
 		}
 
@@ -833,16 +989,12 @@ func extractWordsArray(data interface{}) ([]interface{}, error) {
 func extractAllWordEntries(arr []interface{}) []interface{} {
 	var entries []interface{}
 
-	// Base case: Check if current array is a word entry
 	if isFormattedWordEntry(arr) {
 		return []interface{}{arr}
 	}
 
-	// Recursively check each element in the array
 	for _, item := range arr {
-		// If item is an array, process it
 		if nestedArr, isArray := item.([]interface{}); isArray {
-			// Try to find word entries at this level
 			wordEntries := extractAllWordEntries(nestedArr)
 			if len(wordEntries) > 0 {
 				entries = append(entries, wordEntries...)
@@ -854,22 +1006,16 @@ func extractAllWordEntries(arr []interface{}) []interface{} {
 }
 
 // extractWordEntry tries to extract a single word entry from a nested array structure
-// typically in the format [[[[["romaji", {word data}, []]], score]]]
 func extractWordEntry(arr []interface{}) []interface{} {
-	// Common pattern of nesting for word entries
 	if len(arr) == 0 {
 		return nil
 	}
 
-	// Navigate through the nested structure
 	current := arr
 	for len(current) > 0 {
-		// Check if current is a valid word entry format
 		if isFormattedWordEntry(current) {
 			return current
 		}
-
-		// Go one level deeper
 		nextArr, ok := current[0].([]interface{})
 		if !ok {
 			break
@@ -886,20 +1032,12 @@ func isFormattedWordEntry(arr []interface{}) bool {
 	if len(arr) < 2 {
 		return false
 	}
-
-	// First element should be a string (romaji)
 	_, isString := arr[0].(string)
 	if !isString {
 		return false
 	}
-
-	// Second element should be a map (word data)
 	_, isMap := arr[1].(map[string]interface{})
-	if !isMap {
-		return false
-	}
-
-	return true
+	return isMap
 }
 
 func placeholder() {

@@ -59,7 +59,7 @@ func TestCompareSpacingMethods(t *testing.T) {
 
 	// Compare with expected results
 	expectedSimple := "私 は 日本語 を 勉強 して います 。 毎日 、 新しい 単語 と 文法 を 学んで います 。"
-	expectedSmart := "私 は 日本語 を 勉強 して います。毎日、新しい 単語 と 文法 を 学んで います。"
+	expectedSmart := "私 は 日本語 を 勉強 して います。 毎日、 新しい 単語 と 文法 を 学んで います。"
 
 	if simpleJoin != expectedSimple {
 		t.Errorf("Simple join: expected '%s', got '%s'", expectedSimple, simpleJoin)

@@ -1,5 +1,7 @@
 package ichiran
 
+import "slices"
+
 // JSONToken represents a single token with all its analysis information
 type JSONToken struct {
 	Surface       string         `json:"text"` // Original text
@@ -16,6 +18,29 @@ type JSONToken struct {
 	Components    []JSONToken    `json:"components"`     // Details of delineable elements of compound expressions
 	Raw           []byte         `json:"-"`              // Raw JSON for future processing
 	KanjiReadings []KanjiReading `json:"-"`              // Parsed kanji-kana mappings
+
+	// Structural fields — preserve the full Ichiran metadata.
+	TrueText     string        `json:"truetext,omitempty"`     // Ichiran's truetext (pre-normalization surface)
+	ConjSelector *ConjSelector `json:"conjSelector,omitempty"` // Conjugation selector from interpretation
+	IsPrimary    *bool         `json:"primary,omitempty"`      // Primary flag for compound children
+	CounterData  *CounterData  `json:"counter,omitempty"`      // Counter expression metadata
+	Start        *int          `json:"start,omitempty"`        // Half-open start position (nullable: absent ≠ 0)
+	End          *int          `json:"end,omitempty"`          // Half-open end position (nullable: absent ≠ 0)
+	LexicalType  string        `json:"type,omitempty"`         // Ichiran's word type (KANA, KANJI, etc.)
+}
+
+// ConjSelector identifies which conjugation branch was selected for this
+// interpretation. IsRoot means the Seq is already a dictionary root. IDs
+// restricts which branches are valid. A nil ConjSelector means unspecified.
+type ConjSelector struct {
+	IsRoot bool  `json:"isRoot,omitempty"`
+	IDs    []int `json:"ids,omitempty"`
+}
+
+// CounterData preserves Ichiran's counter expression metadata.
+type CounterData struct {
+	Value   string `json:"value,omitempty"`
+	Ordinal bool   `json:"ordinal,omitempty"`
 }
 
 // in case of multiple alternative, jsonTokenCore represents the essential information that are shared,
@@ -51,6 +76,101 @@ func (token *JSONToken) applyCore(core jsonTokenCore) {
 	token.Score = core.Score
 }
 
+// cloneConjs deep-copies a slice of Conj, including recursive Via chains.
+func cloneConjs(conjs []Conj) []Conj {
+	if conjs == nil {
+		return nil
+	}
+	out := make([]Conj, len(conjs))
+	for i, c := range conjs {
+		out[i] = c
+		out[i].Prop = slices.Clone(c.Prop)
+		out[i].Gloss = slices.Clone(c.Gloss)
+		out[i].Via = cloneConjs(c.Via)
+	}
+	return out
+}
+
+// cloneJSONTokens deep-copies a slice of JSONToken, recursively cloning all
+// nested slices and pointer fields so that no mutable storage is shared.
+func cloneJSONTokens(tokens []JSONToken) []JSONToken {
+	if tokens == nil {
+		return nil
+	}
+	out := make([]JSONToken, len(tokens))
+	for i, t := range tokens {
+		out[i] = t
+		out[i].Gloss = slices.Clone(t.Gloss)
+		out[i].Conj = cloneConjs(t.Conj)
+		out[i].Components = cloneJSONTokens(t.Components)
+		out[i].Alternative = cloneJSONTokens(t.Alternative)
+		out[i].Compound = slices.Clone(t.Compound)
+		out[i].KanjiReadings = slices.Clone(t.KanjiReadings)
+		out[i].Raw = slices.Clone(t.Raw)
+		if t.ConjSelector != nil {
+			cs := *t.ConjSelector
+			cs.IDs = slices.Clone(t.ConjSelector.IDs)
+			out[i].ConjSelector = &cs
+		}
+		if t.IsPrimary != nil {
+			v := *t.IsPrimary
+			out[i].IsPrimary = &v
+		}
+		if t.CounterData != nil {
+			cd := *t.CounterData
+			out[i].CounterData = &cd
+		}
+		if t.Start != nil {
+			v := *t.Start
+			out[i].Start = &v
+		}
+		if t.End != nil {
+			v := *t.End
+			out[i].End = &v
+		}
+	}
+	return out
+}
+
+// selectCandidate replaces all interpretation-dependent fields from src with
+// deep copies, so that no mutable storage is shared between the selected
+// token and the candidate it was copied from. The occurrence address
+// (Surface, Start, End) and the Alternative list are NOT copied.
+func (token *JSONToken) selectCandidate(src *JSONToken) {
+	token.Kana = src.Kana
+	token.Reading = src.Reading
+	token.Romaji = src.Romaji
+	token.Seq = src.Seq
+	token.Score = src.Score
+	token.Gloss = slices.Clone(src.Gloss)
+	token.Conj = cloneConjs(src.Conj)
+	token.Components = cloneJSONTokens(src.Components)
+	token.Compound = slices.Clone(src.Compound)
+	token.KanjiReadings = slices.Clone(src.KanjiReadings)
+	token.TrueText = src.TrueText
+	if src.ConjSelector != nil {
+		cs := *src.ConjSelector
+		cs.IDs = slices.Clone(src.ConjSelector.IDs)
+		token.ConjSelector = &cs
+	} else {
+		token.ConjSelector = nil
+	}
+	if src.IsPrimary != nil {
+		v := *src.IsPrimary
+		token.IsPrimary = &v
+	} else {
+		token.IsPrimary = nil
+	}
+	if src.CounterData != nil {
+		cd := *src.CounterData
+		token.CounterData = &cd
+	} else {
+		token.CounterData = nil
+	}
+	token.LexicalType = src.LexicalType
+	token.IsLexical = src.IsLexical
+}
+
 // JSONTokens is a slice of token pointers representing a complete analysis result.
 type JSONTokens []*JSONToken
 
@@ -76,17 +196,20 @@ type Gloss struct {
 
 // Conj represents conjugation information
 type Conj struct {
-	Prop    []Prop  `json:"prop"`    // Conjugation properties
-	Reading string  `json:"reading"` // Base form reading
-	Gloss   []Gloss `json:"gloss"`   // Base form meanings
-	ReadOk  bool    `json:"readok"`  // Reading validity flag
+	Prop    []Prop  `json:"prop"`          // Conjugation properties
+	Reading string  `json:"reading"`       // Base form reading
+	Gloss   []Gloss `json:"gloss"`         // Base form meanings
+	ReadOk  bool    `json:"readok"`        // Reading validity flag
+	Via     []Conj  `json:"via,omitempty"` // Recursive via chain
+	Fml     bool    `json:"fml,omitempty"` // Formal flag
 }
 
 // Prop represents grammatical properties
 type Prop struct {
-	Pos  string `json:"pos"`  // Part of speech
-	Type string `json:"type"` // Type of conjugation
-	Neg  bool   `json:"neg"`  // Negation flag
+	Pos  string `json:"pos"`           // Part of speech
+	Type string `json:"type"`          // Type of conjugation
+	Neg  bool   `json:"neg"`           // Negation flag
+	Fml  bool   `json:"fml,omitempty"` // Formal flag
 }
 
 // KanjiReading represents the reading information for a single kanji character
@@ -114,4 +237,14 @@ type ProcessedToken struct {
 	Original string
 	Result   string
 	Status   ProcessingStatus
+}
+
+// intPtr returns a pointer to the given int value.
+func intPtr(v int) *int {
+	return &v
+}
+
+// boolPtr returns a pointer to the given bool value.
+func boolPtr(v bool) *bool {
+	return &v
 }
