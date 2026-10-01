@@ -525,8 +525,8 @@ func TestBuildDocumentLispExpr_FragmentIDEmbedded(t *testing.T) {
 		},
 	}
 	expr := buildDocumentLispExpr(input, 1)
-	assert.Contains(t, expr, `("id" 42)`)
-	assert.Contains(t, expr, `("id" 99)`)
+	assert.Contains(t, expr, `(42 . "テスト")`)
+	assert.Contains(t, expr, `(99 . "確認")`)
 }
 
 func TestBuildDocumentLispExpr_LimitEmbedded(t *testing.T) {
@@ -534,7 +534,20 @@ func TestBuildDocumentLispExpr_LimitEmbedded(t *testing.T) {
 		Fragments: []FragmentInput{{ID: 1, Text: "テスト"}},
 	}
 	expr := buildDocumentLispExpr(input, 7)
-	assert.Contains(t, expr, ":limit 7")
+	assert.Contains(t, expr, "(cdr fragment) 7)")
+}
+
+// The per-fragment analysis body must be emitted once, with fragments as
+// data.  Emitting it once per fragment made SBCL compile it N times in one
+// form and exhaust its heap at about a dozen fragments.
+func TestBuildDocumentLispExpr_BodyEmittedOnce(t *testing.T) {
+	input := DocumentInput{}
+	for i := 0; i < 50; i++ {
+		input.Fragments = append(input.Fragments, FragmentInput{ID: i, Text: "テスト"})
+	}
+	expr := buildDocumentLispExpr(input, 5)
+	assert.Equal(t, 1, strings.Count(expr, "ichiran/dict::dict-segment"))
+	assert.Equal(t, 1, strings.Count(expr, "ichiran::basic-split"))
 }
 
 func TestBuildDocumentLispExpr_EscapesSpecialChars(t *testing.T) {

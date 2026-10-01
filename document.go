@@ -329,6 +329,51 @@ func buildDocumentLispExpr(input DocumentInput, limit int) string {
 	b.WriteString(` (setf (cdr parsed) (remove "components" (cdr parsed) :key #'car :test #'equal)))`)
 	b.WriteString(` parsed))`)
 
+	// ==================== langkit-analyze-fragment ====================
+	// Defined once and called per fragment.  Emitting this body once per
+	// fragment made SBCL compile it N times inside one form, which
+	// exhausts its heap at about a dozen fragments.
+	b.WriteString(` (defun langkit-analyze-fragment (id source-text limit)`)
+	b.WriteString(` (let* ((normalized (ichiran::normalize (copy-seq source-text) :context ichiran::*default-romanization-method*))`)
+	b.WriteString(` (splits (ichiran::basic-split normalized))`)
+	b.WriteString(` (seg-index 0)`)
+	b.WriteString(` (char-offset 0)`)
+	b.WriteString(` (segments nil))`)
+
+	b.WriteString(` (dolist (split splits)`)
+	b.WriteString(` (let* ((split-type (car split))`)
+	b.WriteString(` (split-text (cdr split))`)
+	b.WriteString(` (text-len (length split-text))`)
+	b.WriteString(` (seg-start char-offset)`)
+	b.WriteString(` (seg-end (+ char-offset text-len)))`)
+
+	// Literal segment (misc)
+	b.WriteString(` (if (eql split-type :misc)`)
+	b.WriteString(` (push (jsown:new-js ("index" seg-index) ("kind" "literal")`)
+	b.WriteString(` ("start" seg-start) ("end" seg-end) ("text" split-text)) segments)`)
+
+	// Word segment
+	b.WriteString(` (let ((interps (ichiran/dict::dict-segment split-text :limit limit)))`)
+	b.WriteString(` (let ((interp-results nil))`)
+	b.WriteString(` (dolist (interp interps)`)
+	b.WriteString(` (let* ((word-list (car interp))`)
+	b.WriteString(` (score (cdr interp))`)
+	b.WriteString(` (tokens nil))`)
+	b.WriteString(` (dolist (wi word-list)`)
+	b.WriteString(` (let ((enriched (langkit-enrich-word-info wi)))`)
+	b.WriteString(` (langkit-rebase-positions enriched seg-start)`)
+	b.WriteString(` (push enriched tokens)))`)
+	b.WriteString(` (push (jsown:new-js ("score" (or score 0)) ("tokens" (nreverse tokens))) interp-results)))`)
+	b.WriteString(` (push (jsown:new-js ("index" seg-index) ("kind" "word")`)
+	b.WriteString(` ("start" seg-start) ("end" seg-end) ("text" split-text)`)
+	b.WriteString(` ("interpretations" (nreverse interp-results))) segments))))`)
+
+	b.WriteString(` (incf char-offset text-len)`)
+	b.WriteString(` (incf seg-index)))`)
+
+	b.WriteString(` (jsown:new-js ("id" id) ("sourceText" source-text)`)
+	b.WriteString(` ("analysisText" normalized) ("segments" (nreverse segments)))))`)
+
 	// ------------------------------------------------------------------
 	// Main: process all fragments.
 	// Clear the request-local memo before each batch.
@@ -340,49 +385,14 @@ func buildDocumentLispExpr(input DocumentInput, limit int) string {
 	b.WriteString(` (let ((result (jsown:new-js ("adapterVersion" 1) ("fragments" nil))))`)
 	b.WriteString(` (let ((fragment-results nil))`)
 
+	// Fragments travel as quoted data, which the reader takes in without
+	// compiling anything per fragment.
+	b.WriteString(` (dolist (fragment '(`)
 	for _, frag := range input.Fragments {
-		escapedText := escapeLispString(frag.Text)
-		b.WriteString(fmt.Sprintf(` (let* ((source-text "%s")`, escapedText))
-	b.WriteString(` (normalized (ichiran::normalize (copy-seq source-text) :context ichiran::*default-romanization-method*))`)
-		b.WriteString(` (splits (ichiran::basic-split normalized))`)
-		b.WriteString(` (seg-index 0)`)
-		b.WriteString(` (char-offset 0)`)
-		b.WriteString(` (segments nil))`)
-
-		b.WriteString(` (dolist (split splits)`)
-		b.WriteString(` (let* ((split-type (car split))`)
-		b.WriteString(` (split-text (cdr split))`)
-		b.WriteString(` (text-len (length split-text))`)
-		b.WriteString(` (seg-start char-offset)`)
-		b.WriteString(` (seg-end (+ char-offset text-len)))`)
-
-		// Literal segment (misc)
-		b.WriteString(` (if (eql split-type :misc)`)
-		b.WriteString(` (push (jsown:new-js ("index" seg-index) ("kind" "literal")`)
-		b.WriteString(` ("start" seg-start) ("end" seg-end) ("text" split-text)) segments)`)
-
-		// Word segment
-		b.WriteString(fmt.Sprintf(` (let ((interps (ichiran/dict::dict-segment split-text :limit %d)))`, limit))
-		b.WriteString(` (let ((interp-results nil))`)
-		b.WriteString(` (dolist (interp interps)`)
-		b.WriteString(` (let* ((word-list (car interp))`)
-		b.WriteString(` (score (cdr interp))`)
-		b.WriteString(` (tokens nil))`)
-		b.WriteString(` (dolist (wi word-list)`)
-		b.WriteString(` (let ((enriched (langkit-enrich-word-info wi)))`)
-		b.WriteString(` (langkit-rebase-positions enriched seg-start)`)
-		b.WriteString(` (push enriched tokens)))`)
-		b.WriteString(` (push (jsown:new-js ("score" (or score 0)) ("tokens" (nreverse tokens))) interp-results)))`)
-		b.WriteString(` (push (jsown:new-js ("index" seg-index) ("kind" "word")`)
-		b.WriteString(` ("start" seg-start) ("end" seg-end) ("text" split-text)`)
-		b.WriteString(` ("interpretations" (nreverse interp-results))) segments))))`)
-
-		b.WriteString(` (incf char-offset text-len)`)
-		b.WriteString(` (incf seg-index)))`)
-
-		b.WriteString(fmt.Sprintf(` (push (jsown:new-js ("id" %d) ("sourceText" source-text)`, frag.ID))
-		b.WriteString(` ("analysisText" normalized) ("segments" (nreverse segments))) fragment-results))`)
+		b.WriteString(fmt.Sprintf(`(%d . "%s")`, frag.ID, escapeLispString(frag.Text)))
 	}
+	b.WriteString(`))`)
+	b.WriteString(fmt.Sprintf(` (push (langkit-analyze-fragment (car fragment) (cdr fragment) %d) fragment-results))`, limit))
 
 	b.WriteString(` (jsown:extend-js result ("fragments" (nreverse fragment-results))))`)
 	b.WriteString(` (when *langkit-warnings* (jsown:extend-js result ("warnings" (nreverse *langkit-warnings*))))`)

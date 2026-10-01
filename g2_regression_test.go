@@ -287,3 +287,40 @@ func TestAnalyzeDocument_BoundedChainsReturnWarnings(t *testing.T) {
 	assert.Contains(t, result.Warnings[0], "hop limit")
 	assert.Contains(t, result.Warnings[1], "cycle")
 }
+
+// A hundred-fragment batch must analyze in one request, and each fragment
+// must come back identical to its analysis alone.  Every earlier live test
+// sent at most ten fragments, which hid an adapter that exhausted SBCL's
+// heap at about a dozen.  Langkit's batches hold several hundred subtitle
+// lines; a hundred keeps this test near a minute while staying far past
+// the old failure point.
+func TestAnalyzeDocument_HundredFragmentBatch(t *testing.T) {
+	g2EnsureInit(t)
+	lines := []string{
+		"おっせえよ！", "生物を食べた", "止めている", "ここは寒い", "",
+		"行ってきます", "何で？", "勉強しています", "辛いのは嫌だ", "一日中寝てた",
+	}
+	input := DocumentInput{}
+	for len(input.Fragments) < 100 {
+		for _, line := range lines {
+			input.Fragments = append(input.Fragments,
+				FragmentInput{ID: len(input.Fragments), Text: line})
+		}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+	batch, err := AnalyzeDocumentContext(ctx, input, DocumentOptions{Limit: 3})
+	require.NoError(t, err)
+	require.Len(t, batch.Fragments, len(input.Fragments))
+
+	alone := g2AnalyzeFragments(t, lines...)
+	for i, fragment := range batch.Fragments {
+		assert.Equal(t, i, fragment.ID)
+		want, err := json.Marshal(alone.Fragments[i%len(lines)].Segments)
+		require.NoError(t, err)
+		got, err := json.Marshal(fragment.Segments)
+		require.NoError(t, err)
+		assert.JSONEq(t, string(want), string(got),
+			"fragment %d %q", i, input.Fragments[i].Text)
+	}
+}
