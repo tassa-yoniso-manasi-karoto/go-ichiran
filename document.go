@@ -42,13 +42,38 @@ func (im *IchiranManager) AnalyzeDocument(ctx context.Context, input DocumentInp
 		return &DocumentResult{AdapterVersion: adapterVersion}, nil
 	}
 
-	// Get Docker client
+	output, err := im.runLispJSON(queryCtx, buildDocumentLispExpr(input, limit))
+	if err != nil {
+		return nil, err
+	}
+
+	result, err := parseDocumentResult(output)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse document result: %w", err)
+	}
+	if len(result.Fragments) != len(input.Fragments) {
+		return nil, fmt.Errorf("document adapter returned %d fragments for %d inputs", len(result.Fragments), len(input.Fragments))
+	}
+	for i, fragment := range result.Fragments {
+		if fragment.ID != input.Fragments[i].ID || fragment.SourceText != input.Fragments[i].Text {
+			return nil, fmt.Errorf("document adapter changed source text or ID for fragment %d", i)
+		}
+	}
+	for _, warning := range result.Warnings {
+		Logger.Warn().Str("adapter", "ichiran-document").Msg(warning)
+	}
+
+	return result, nil
+}
+
+// runLispJSON evaluates one Lisp expression with ichiran-cli inside the
+// running container and returns the JSON line it printed.
+func (im *IchiranManager) runLispJSON(queryCtx context.Context, lispExpr string) ([]byte, error) {
 	client, err := im.docker.GetClient()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get Docker client: %w", err)
 	}
 
-	// Check container status
 	containerInfo, err := client.ContainerInspect(queryCtx, im.containerName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to inspect container: %w", err)
@@ -57,18 +82,9 @@ func (im *IchiranManager) AnalyzeDocument(ctx context.Context, input DocumentInp
 		return nil, fmt.Errorf("container %s is not running", im.containerName)
 	}
 
-	// Build the Lisp expression for batch analysis.
-	lispExpr := buildDocumentLispExpr(input, limit)
-
-	cmd := []string{
-		"ichiran-cli",
-		"-e",
-		lispExpr,
-	}
-
 	execConfig := container.ExecOptions{
 		User:         containerInfo.Config.User,
-		Cmd:          cmd,
+		Cmd:          []string{"ichiran-cli", "-e", lispExpr},
 		AttachStdout: true,
 		AttachStderr: true,
 		Tty:          false,
@@ -99,24 +115,7 @@ func (im *IchiranManager) AnalyzeDocument(ctx context.Context, input DocumentInp
 		return nil, fmt.Errorf("command failed with exit code %d: %s",
 			inspect.ExitCode, string(output))
 	}
-
-	result, err := parseDocumentResult(output)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse document result: %w", err)
-	}
-	if len(result.Fragments) != len(input.Fragments) {
-		return nil, fmt.Errorf("document adapter returned %d fragments for %d inputs", len(result.Fragments), len(input.Fragments))
-	}
-	for i, fragment := range result.Fragments {
-		if fragment.ID != input.Fragments[i].ID || fragment.SourceText != input.Fragments[i].Text {
-			return nil, fmt.Errorf("document adapter changed source text or ID for fragment %d", i)
-		}
-	}
-	for _, warning := range result.Warnings {
-		Logger.Warn().Str("adapter", "ichiran-document").Msg(warning)
-	}
-
-	return result, nil
+	return output, nil
 }
 
 // AnalyzeDocumentContext is the context-aware default-manager version.
@@ -159,94 +158,7 @@ func buildDocumentLispExpr(input DocumentInput, limit int) string {
 	b.WriteString(` (when match-json (jsown:extend-js word-json ("match" match-json)))`)
 	b.WriteString(` (jsown:to-json word-json)))`) // close let*, defmethod
 
-	b.WriteString(` (defvar *langkit-root-memo* (make-hash-table :test 'equal))`)
-	b.WriteString(` (defvar *langkit-warnings* nil)`)
-	b.WriteString(` (defun langkit-warn (control &rest args) (push (apply #'format nil control args) *langkit-warnings*))`)
-	b.WriteString(` (defun langkit-kana-key (text) (ichiran::as-hiragana (ichiran::normalize (copy-seq (ichiran/dict::strip-hints text)) :context :kana)))`)
-	b.WriteString(` (defun langkit-sort-readings (records) (sort records (lambda (a b) (let ((oa (ichiran/dict::ord a)) (ob (ichiran/dict::ord b)) (ta (ichiran/dict::text a)) (tb (ichiran/dict::text b))) (or (< oa ob) (and (= oa ob) (or (string< ta tb) (and (equal ta tb) (< (ichiran/dict::id a) (ichiran/dict::id b))))))))))`)
-
-	// ==================== langkit-walk-conj ====================
-	// Per-branch visited list.  Kana evidence required.  No old-evidence fallback.
-	b.WriteString(` (defun langkit-walk-conj (seq conj-ids from-filter sp kn visited hops)`)
-	b.WriteString(` (when (>= hops 64) (langkit-warn "Conjugation hop limit at Seq ~A; leaving branch unresolved" seq) (return-from langkit-walk-conj nil))`)
-	b.WriteString(` (ichiran/dict::with-connection ichiran/dict::*connection*`)
-	b.WriteString(` (let ((conjs (cond`)
-	b.WriteString(` (from-filter (postmodern:select-dao 'ichiran/dict::conjugation (:and (:= 'ichiran/dict::seq seq) (:= 'ichiran/dict::from from-filter))))`)
-	b.WriteString(` ((and conj-ids (listp conj-ids)) (postmodern:select-dao 'ichiran/dict::conjugation (:and (:= 'ichiran/dict::seq seq) (:in 'ichiran/dict::id (:set conj-ids)))))`)
-	b.WriteString(` (t (postmodern:select-dao 'ichiran/dict::conjugation (:= 'ichiran/dict::seq seq))))))`)
-	b.WriteString(` (let ((results nil))`)
-	b.WriteString(` (dolist (conj conjs)`)
-	b.WriteString(` (let* ((cid (ichiran/dict::id conj)) (visit-key (cons seq cid)))`)
-	b.WriteString(` (when (member visit-key visited :test 'equal) (langkit-warn "Conjugation cycle at Seq ~A, conjugation ~A; leaving branch unresolved" seq cid))`)
-	b.WriteString(` (unless (member visit-key visited :test 'equal)`)
-	b.WriteString(` (let* ((new-visited (cons visit-key visited))`)
-	b.WriteString(` (src-map (postmodern:query (:select 'text 'source-text :from 'conj-source-reading :where (:= 'conj-id cid)))))`)
-	b.WriteString(` (let ((next-sp nil) (next-kn nil))`)
-	b.WriteString(` (dolist (s sp) (dolist (pair src-map) (when (equal s (car pair)) (pushnew (cadr pair) next-sp :test 'equal))))`)
-	b.WriteString(` (dolist (k kn) (dolist (pair src-map) (when (equal (langkit-kana-key k) (langkit-kana-key (car pair))) (pushnew (cadr pair) next-kn :test 'equal))))`)
-	// Require kana evidence — abandon branch without it
-	b.WriteString(` (when next-kn`)
-	b.WriteString(` (let ((via (ichiran/dict::seq-via conj)))`)
-	b.WriteString(` (if (or (eql via :null) (null via))`)
-	// Terminal: emit (root-seq kana spelling?) triples
-	b.WriteString(` (let ((root-seq (ichiran/dict::seq-from conj)))`)
-	b.WriteString(` (dolist (rk next-kn)`)
-	b.WriteString(` (if next-sp`)
-	b.WriteString(` (dolist (rs next-sp) (push (list root-seq rk rs) results))`)
-	b.WriteString(` (push (list root-seq rk nil) results))))`)
-	// Via: recurse with matched evidence only (never old evidence)
-	b.WriteString(` (let ((sub (langkit-walk-conj via nil (ichiran/dict::seq-from conj) next-sp next-kn new-visited (1+ hops))))`)
-	b.WriteString(` (setf results (nconc results sub)))`)
-	// close: let-sub, if, let-via, when, let-next, let*-new-visited, unless, let*-cid, dolist
-	b.WriteString(`))))))))`)
-	// close: let-results, let-conjs, with-connection, defun
-	b.WriteString(` results))))`)
-
-	// ==================== langkit-verify-root ====================
-	// Verify the recovered reading before choosing a stable dictionary spelling.
-	b.WriteString(` (defun langkit-verify-root (root-seq recovered-kana recovered-spelling)`)
-	// Kana is mandatory — spelling-only is not a verified root
-	b.WriteString(` (unless recovered-kana (return-from langkit-verify-root nil))`)
-	b.WriteString(` (ichiran/dict::with-connection ichiran/dict::*connection*`)
-	b.WriteString(` (let ((root-entry (car (postmodern:select-dao 'ichiran/dict::entry (:= 'ichiran/dict::seq root-seq)))))`)
-	b.WriteString(` (unless (and root-entry (ichiran/dict::root-p root-entry)) (return-from langkit-verify-root nil))`)
-	// Look up the kana record — required
-	b.WriteString(` (let ((kana-rec (find (langkit-kana-key recovered-kana) (langkit-sort-readings (postmodern:select-dao 'ichiran/dict::kana-text (:= 'ichiran/dict::seq root-seq))) :key (lambda (r) (langkit-kana-key (ichiran/dict::text r))) :test #'equal)))`)
-	b.WriteString(` (unless kana-rec (return-from langkit-verify-root nil))`)
-	// Kanji record — optional, for restricted-readings verification only
-	b.WriteString(` (let ((kanji-rec (when recovered-spelling (car (postmodern:select-dao 'ichiran/dict::kanji-text (:and (:= 'ichiran/dict::seq root-seq) (:= 'ichiran/dict::text recovered-spelling)))))))`)
-	b.WriteString(` (when (and recovered-spelling (null kanji-rec) (not (equal (langkit-kana-key recovered-spelling) (langkit-kana-key recovered-kana)))) (return-from langkit-verify-root nil))`)
-	// Restricted readings
-	b.WriteString(` (let ((restricted (postmodern:query (:select 'reading 'text :from 'restricted-readings :where (:= 'seq root-seq)))))`)
-	b.WriteString(` (when (and kanji-rec restricted)`)
-	b.WriteString(` (unless (ichiran/dict::match-kana-kanji kana-rec kanji-rec restricted)`)
-	b.WriteString(` (return-from langkit-verify-root nil)))`)
-	// Canonical lemma — always by dictionary ord, never from occurrence
-	b.WriteString(` (let ((dict-kana (ichiran/dict::strip-hints (ichiran/dict::text kana-rec))) (lemma nil) (lemma-rec nil))`)
-	b.WriteString(` (cond`)
-	b.WriteString(` ((ichiran/dict::nokanji kana-rec) (setf lemma dict-kana))`)
-	b.WriteString(` ((= (ichiran/dict::n-kanji root-entry) 0) (setf lemma dict-kana))`)
-	b.WriteString(` ((postmodern:select-dao 'ichiran/dict::sense-prop (:and (:= 'ichiran/dict::seq root-seq) (:= 'ichiran/dict::tag "misc") (:= 'ichiran/dict::text "uk"))) (setf lemma dict-kana))`)
-	b.WriteString(` (t`)
-	b.WriteString(` (let ((kanji-recs (langkit-sort-readings (postmodern:select-dao 'ichiran/dict::kanji-text (:= 'ichiran/dict::seq root-seq)))))`)
-	b.WriteString(` (dolist (kt kanji-recs)`)
-	b.WriteString(` (when (ichiran/dict::match-kana-kanji kana-rec kt restricted)`)
-	b.WriteString(` (setf lemma (ichiran/dict::text kt) lemma-rec kt) (return)))`)
-	b.WriteString(` (unless lemma (setf lemma dict-kana)))))`)
-	// A sense restricted to another spelling must not leak through a shared kana.
-	b.WriteString(` (let ((gloss (langkit-root-gloss root-seq kana-rec lemma-rec)))`)
-	b.WriteString(` (let ((js (jsown:new-js ("dictionarySeq" root-seq) ("lemma" (or lemma "")) ("kana" dict-kana))))`)
-	b.WriteString(` (when gloss (jsown:extend-js js ("gloss" gloss)))`)
-	// close: let-js, let-gloss, let-lemma, let-restricted, let-kanji-rec, let-kana-rec, let-root-entry, with-connection, defun
-	b.WriteString(` js)))))))))`)
-	b.WriteString(` (defun langkit-root-gloss (seq kana-rec lemma-rec)`)
-	b.WriteString(` (loop with inherited-pos = "[]" for (pos gloss props) in (ichiran/dict::get-senses seq)`)
-	b.WriteString(` do (unless (equal pos "[]") (setf inherited-pos pos))`)
-	b.WriteString(` when (and (let ((readings (cdr (assoc "stagr" props :test #'equal)))) (or (null readings) (member (ichiran/dict::text kana-rec) readings :test #'equal)))`)
-	b.WriteString(` (let ((spellings (cdr (assoc "stagk" props :test #'equal)))) (or (null spellings) (if lemma-rec (member (ichiran/dict::text lemma-rec) spellings :test #'equal) (ichiran/dict::match-sense-restrictions seq props kana-rec)))))`)
-	b.WriteString(` collect (let ((js (jsown:new-js ("pos" inherited-pos) ("gloss" gloss))) (info (cdr (assoc "s_inf" props :test #'equal))) (fields (cdr (assoc "field" props :test #'equal))))`)
-	b.WriteString(` (when info (jsown:extend-js js ("info" (format nil "~{~A~^; ~}" info))))`)
-	b.WriteString(` (when fields (jsown:extend-js js ("field" (format nil "{~{~A~^,~}}" fields)))) js)))`)
+	writeRootLispDefinitions(&b)
 
 	// ==================== langkit-resolve-roots ====================
 	b.WriteString(` (defun langkit-resolve-roots (word-info)`)
@@ -401,6 +313,102 @@ func buildDocumentLispExpr(input DocumentInput, limit int) string {
 	b.WriteString(`)`)
 
 	return b.String()
+}
+
+// writeRootLispDefinitions writes the Lisp that resolves and verifies
+// dictionary roots: the conjugation walk, root verification against the
+// kana and kanji records and their reading restrictions, canonical spelling
+// and gloss. Document analysis and lemma resolution share it, so a lemma
+// proposed by a reviewer is verified exactly like an analyzed word.
+func writeRootLispDefinitions(b *strings.Builder) {
+	b.WriteString(` (defvar *langkit-root-memo* (make-hash-table :test 'equal))`)
+	b.WriteString(` (defvar *langkit-warnings* nil)`)
+	b.WriteString(` (defun langkit-warn (control &rest args) (push (apply #'format nil control args) *langkit-warnings*))`)
+	b.WriteString(` (defun langkit-kana-key (text) (ichiran::as-hiragana (ichiran::normalize (copy-seq (ichiran/dict::strip-hints text)) :context :kana)))`)
+	b.WriteString(` (defun langkit-sort-readings (records) (sort records (lambda (a b) (let ((oa (ichiran/dict::ord a)) (ob (ichiran/dict::ord b)) (ta (ichiran/dict::text a)) (tb (ichiran/dict::text b))) (or (< oa ob) (and (= oa ob) (or (string< ta tb) (and (equal ta tb) (< (ichiran/dict::id a) (ichiran/dict::id b))))))))))`)
+
+	// ==================== langkit-walk-conj ====================
+	// Per-branch visited list.  Kana evidence required.  No old-evidence fallback.
+	b.WriteString(` (defun langkit-walk-conj (seq conj-ids from-filter sp kn visited hops)`)
+	b.WriteString(` (when (>= hops 64) (langkit-warn "Conjugation hop limit at Seq ~A; leaving branch unresolved" seq) (return-from langkit-walk-conj nil))`)
+	b.WriteString(` (ichiran/dict::with-connection ichiran/dict::*connection*`)
+	b.WriteString(` (let ((conjs (cond`)
+	b.WriteString(` (from-filter (postmodern:select-dao 'ichiran/dict::conjugation (:and (:= 'ichiran/dict::seq seq) (:= 'ichiran/dict::from from-filter))))`)
+	b.WriteString(` ((and conj-ids (listp conj-ids)) (postmodern:select-dao 'ichiran/dict::conjugation (:and (:= 'ichiran/dict::seq seq) (:in 'ichiran/dict::id (:set conj-ids)))))`)
+	b.WriteString(` (t (postmodern:select-dao 'ichiran/dict::conjugation (:= 'ichiran/dict::seq seq))))))`)
+	b.WriteString(` (let ((results nil))`)
+	b.WriteString(` (dolist (conj conjs)`)
+	b.WriteString(` (let* ((cid (ichiran/dict::id conj)) (visit-key (cons seq cid)))`)
+	b.WriteString(` (when (member visit-key visited :test 'equal) (langkit-warn "Conjugation cycle at Seq ~A, conjugation ~A; leaving branch unresolved" seq cid))`)
+	b.WriteString(` (unless (member visit-key visited :test 'equal)`)
+	b.WriteString(` (let* ((new-visited (cons visit-key visited))`)
+	b.WriteString(` (src-map (postmodern:query (:select 'text 'source-text :from 'conj-source-reading :where (:= 'conj-id cid)))))`)
+	b.WriteString(` (let ((next-sp nil) (next-kn nil))`)
+	b.WriteString(` (dolist (s sp) (dolist (pair src-map) (when (equal s (car pair)) (pushnew (cadr pair) next-sp :test 'equal))))`)
+	b.WriteString(` (dolist (k kn) (dolist (pair src-map) (when (equal (langkit-kana-key k) (langkit-kana-key (car pair))) (pushnew (cadr pair) next-kn :test 'equal))))`)
+	// Require kana evidence — abandon branch without it
+	b.WriteString(` (when next-kn`)
+	b.WriteString(` (let ((via (ichiran/dict::seq-via conj)))`)
+	b.WriteString(` (if (or (eql via :null) (null via))`)
+	// Terminal: emit (root-seq kana spelling?) triples
+	b.WriteString(` (let ((root-seq (ichiran/dict::seq-from conj)))`)
+	b.WriteString(` (dolist (rk next-kn)`)
+	b.WriteString(` (if next-sp`)
+	b.WriteString(` (dolist (rs next-sp) (push (list root-seq rk rs) results))`)
+	b.WriteString(` (push (list root-seq rk nil) results))))`)
+	// Via: recurse with matched evidence only (never old evidence)
+	b.WriteString(` (let ((sub (langkit-walk-conj via nil (ichiran/dict::seq-from conj) next-sp next-kn new-visited (1+ hops))))`)
+	b.WriteString(` (setf results (nconc results sub)))`)
+	// close: let-sub, if, let-via, when, let-next, let*-new-visited, unless, let*-cid, dolist
+	b.WriteString(`))))))))`)
+	// close: let-results, let-conjs, with-connection, defun
+	b.WriteString(` results))))`)
+
+	// ==================== langkit-verify-root ====================
+	// Verify the recovered reading before choosing a stable dictionary spelling.
+	b.WriteString(` (defun langkit-verify-root (root-seq recovered-kana recovered-spelling)`)
+	// Kana is mandatory — spelling-only is not a verified root
+	b.WriteString(` (unless recovered-kana (return-from langkit-verify-root nil))`)
+	b.WriteString(` (ichiran/dict::with-connection ichiran/dict::*connection*`)
+	b.WriteString(` (let ((root-entry (car (postmodern:select-dao 'ichiran/dict::entry (:= 'ichiran/dict::seq root-seq)))))`)
+	b.WriteString(` (unless (and root-entry (ichiran/dict::root-p root-entry)) (return-from langkit-verify-root nil))`)
+	// Look up the kana record — required
+	b.WriteString(` (let ((kana-rec (find (langkit-kana-key recovered-kana) (langkit-sort-readings (postmodern:select-dao 'ichiran/dict::kana-text (:= 'ichiran/dict::seq root-seq))) :key (lambda (r) (langkit-kana-key (ichiran/dict::text r))) :test #'equal)))`)
+	b.WriteString(` (unless kana-rec (return-from langkit-verify-root nil))`)
+	// Kanji record — optional, for restricted-readings verification only
+	b.WriteString(` (let ((kanji-rec (when recovered-spelling (car (postmodern:select-dao 'ichiran/dict::kanji-text (:and (:= 'ichiran/dict::seq root-seq) (:= 'ichiran/dict::text recovered-spelling)))))))`)
+	b.WriteString(` (when (and recovered-spelling (null kanji-rec) (not (equal (langkit-kana-key recovered-spelling) (langkit-kana-key recovered-kana)))) (return-from langkit-verify-root nil))`)
+	// Restricted readings
+	b.WriteString(` (let ((restricted (postmodern:query (:select 'reading 'text :from 'restricted-readings :where (:= 'seq root-seq)))))`)
+	b.WriteString(` (when (and kanji-rec restricted)`)
+	b.WriteString(` (unless (ichiran/dict::match-kana-kanji kana-rec kanji-rec restricted)`)
+	b.WriteString(` (return-from langkit-verify-root nil)))`)
+	// Canonical lemma — always by dictionary ord, never from occurrence
+	b.WriteString(` (let ((dict-kana (ichiran/dict::strip-hints (ichiran/dict::text kana-rec))) (lemma nil) (lemma-rec nil))`)
+	b.WriteString(` (cond`)
+	b.WriteString(` ((ichiran/dict::nokanji kana-rec) (setf lemma dict-kana))`)
+	b.WriteString(` ((= (ichiran/dict::n-kanji root-entry) 0) (setf lemma dict-kana))`)
+	b.WriteString(` ((postmodern:select-dao 'ichiran/dict::sense-prop (:and (:= 'ichiran/dict::seq root-seq) (:= 'ichiran/dict::tag "misc") (:= 'ichiran/dict::text "uk"))) (setf lemma dict-kana))`)
+	b.WriteString(` (t`)
+	b.WriteString(` (let ((kanji-recs (langkit-sort-readings (postmodern:select-dao 'ichiran/dict::kanji-text (:= 'ichiran/dict::seq root-seq)))))`)
+	b.WriteString(` (dolist (kt kanji-recs)`)
+	b.WriteString(` (when (ichiran/dict::match-kana-kanji kana-rec kt restricted)`)
+	b.WriteString(` (setf lemma (ichiran/dict::text kt) lemma-rec kt) (return)))`)
+	b.WriteString(` (unless lemma (setf lemma dict-kana)))))`)
+	// A sense restricted to another spelling must not leak through a shared kana.
+	b.WriteString(` (let ((gloss (langkit-root-gloss root-seq kana-rec lemma-rec)))`)
+	b.WriteString(` (let ((js (jsown:new-js ("dictionarySeq" root-seq) ("lemma" (or lemma "")) ("kana" dict-kana))))`)
+	b.WriteString(` (when gloss (jsown:extend-js js ("gloss" gloss)))`)
+	// close: let-js, let-gloss, let-lemma, let-restricted, let-kanji-rec, let-kana-rec, let-root-entry, with-connection, defun
+	b.WriteString(` js)))))))))`)
+	b.WriteString(` (defun langkit-root-gloss (seq kana-rec lemma-rec)`)
+	b.WriteString(` (loop with inherited-pos = "[]" for (pos gloss props) in (ichiran/dict::get-senses seq)`)
+	b.WriteString(` do (unless (equal pos "[]") (setf inherited-pos pos))`)
+	b.WriteString(` when (and (let ((readings (cdr (assoc "stagr" props :test #'equal)))) (or (null readings) (member (ichiran/dict::text kana-rec) readings :test #'equal)))`)
+	b.WriteString(` (let ((spellings (cdr (assoc "stagk" props :test #'equal)))) (or (null spellings) (if lemma-rec (member (ichiran/dict::text lemma-rec) spellings :test #'equal) (ichiran/dict::match-sense-restrictions seq props kana-rec)))))`)
+	b.WriteString(` collect (let ((js (jsown:new-js ("pos" inherited-pos) ("gloss" gloss))) (info (cdr (assoc "s_inf" props :test #'equal))) (fields (cdr (assoc "field" props :test #'equal))))`)
+	b.WriteString(` (when info (jsown:extend-js js ("info" (format nil "~{~A~^; ~}" info))))`)
+	b.WriteString(` (when fields (jsown:extend-js js ("field" (format nil "{~{~A~^,~}}" fields)))) js)))`)
 }
 
 // parseDocumentResult parses the versioned envelope JSON from AnalyzeDocument.
