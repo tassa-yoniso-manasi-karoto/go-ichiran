@@ -702,9 +702,10 @@ func g2EnsureInit(t *testing.T) {
 		t.Skip("skipping test that requires Docker; set ICHIRAN_MANUAL_TEST=1 to run")
 	}
 	g2InitOnce.Do(func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
-		defer cancel()
-		g2InitErr = InitWithContext(ctx)
+		// The default manager keeps the context it is created with and uses
+		// it again for image pulls, so that context must outlive every test
+		// in the run. Docker's own timeouts bound the initialization.
+		g2InitErr = InitWithContext(context.Background())
 	})
 	require.NoError(t, g2InitErr, "Ichiran init failed")
 }
