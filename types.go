@@ -312,6 +312,15 @@ type FragmentResult struct {
 	SourceText   string          `json:"sourceText"`
 	AnalysisText string          `json:"analysisText"`
 	Segments     []SegmentResult `json:"segments"`
+
+	// SourceOffsets maps AnalysisText back to SourceText, which Ichiran's
+	// normalization changes (。 becomes ". ", half-width kana become
+	// full-width). It holds, for each rune of AnalysisText, the rune offset
+	// in SourceText it came from, then the rune length of SourceText, so
+	// the analysis span [s, e) covers SourceText[SourceOffsets[s]:
+	// SourceOffsets[e]]. It is nil when the adapter could not reproduce
+	// Ichiran's normalization exactly.
+	SourceOffsets []int `json:"sourceOffsets,omitempty"`
 }
 
 // SegmentKind distinguishes word segments from literal (punctuation/whitespace).

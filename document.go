@@ -241,6 +241,25 @@ func buildDocumentLispExpr(input DocumentInput, limit int) string {
 	b.WriteString(` (setf (cdr parsed) (remove "components" (cdr parsed) :key #'car :test #'equal)))`)
 	b.WriteString(` parsed))`)
 
+	// ==================== langkit-source-offsets ====================
+	// Replays Ichiran's normalize with its own tables, recording where each
+	// normalized character came from. The replay must reproduce the
+	// normalized text exactly, or no offsets are returned.
+	b.WriteString(` (defun langkit-source-offsets (source-text normalized)`)
+	b.WriteString(` (let* ((context ichiran::*default-romanization-method*)`)
+	b.WriteString(` (step (map 'string (lambda (c) (or (ichiran/characters::to-normal-char c :context context) c)) source-text))`)
+	b.WriteString(` (alist (loop for (from to) on (append ichiran/characters::*punctuation-marks* ichiran/characters::*dakuten-join*) by #'cddr collect (cons from to)))`)
+	b.WriteString(` (scanner (ppcre:create-scanner (cons :alternation (mapcar #'car alist))))`)
+	b.WriteString(` (offsets nil) (out (make-string-output-stream)) (pos 0))`)
+	b.WriteString(` (ppcre:do-matches (ms me scanner step)`)
+	b.WriteString(` (loop for i from pos below ms do (push i offsets) (write-char (char step i) out))`)
+	b.WriteString(` (let ((to (cdr (assoc (subseq step ms me) alist :test #'equal))))`)
+	b.WriteString(` (loop repeat (length to) do (push ms offsets)) (write-string to out))`)
+	b.WriteString(` (setf pos me))`)
+	b.WriteString(` (loop for i from pos below (length step) do (push i offsets) (write-char (char step i) out))`)
+	b.WriteString(` (push (length source-text) offsets)`)
+	b.WriteString(` (when (string= (get-output-stream-string out) normalized) (nreverse offsets))))`)
+
 	// ==================== langkit-analyze-fragment ====================
 	// Defined once and called per fragment.  Emitting this body once per
 	// fragment made SBCL compile it N times inside one form, which
@@ -283,8 +302,11 @@ func buildDocumentLispExpr(input DocumentInput, limit int) string {
 	b.WriteString(` (incf char-offset text-len)`)
 	b.WriteString(` (incf seg-index)))`)
 
-	b.WriteString(` (jsown:new-js ("id" id) ("sourceText" source-text)`)
-	b.WriteString(` ("analysisText" normalized) ("segments" (nreverse segments)))))`)
+	b.WriteString(` (let ((js (jsown:new-js ("id" id) ("sourceText" source-text)`)
+	b.WriteString(` ("analysisText" normalized) ("segments" (nreverse segments))))`)
+	b.WriteString(` (offsets (langkit-source-offsets source-text normalized)))`)
+	b.WriteString(` (when offsets (jsown:extend-js js ("sourceOffsets" offsets)))`)
+	b.WriteString(` js)))`)
 
 	// ------------------------------------------------------------------
 	// Main: process all fragments.
@@ -483,6 +505,15 @@ func parseDocumentResult(data []byte) (*DocumentResult, error) {
 			return nil, fmt.Errorf("fragment %d: sourceText and analysisText must be strings", id)
 		}
 		frag := FragmentResult{ID: id, SourceText: source, AnalysisText: analysis}
+		if offsetsRaw := fragMap["sourceOffsets"]; offsetsRaw != nil {
+			offsets, err := parseSourceOffsets(offsetsRaw, source, analysis)
+			if err != nil {
+				result.Warnings = append(result.Warnings,
+					fmt.Sprintf("fragment %d: source offsets ignored: %v", id, err))
+			} else {
+				frag.SourceOffsets = offsets
+			}
+		}
 
 		segRaw, segExists := fragMap["segments"]
 		if segExists && segRaw != nil {
@@ -508,6 +539,35 @@ func parseDocumentResult(data []byte) (*DocumentResult, error) {
 	}
 
 	return result, nil
+}
+
+// parseSourceOffsets reads a fragment's map from analysis text to source
+// text: one source offset per analysis rune, then the source length, never
+// decreasing and never past the source.
+func parseSourceOffsets(raw interface{}, source, analysis string) ([]int, error) {
+	items, ok := raw.([]interface{})
+	if !ok {
+		return nil, fmt.Errorf("not an array")
+	}
+	sourceRunes := utf8.RuneCountInString(source)
+	if len(items) != utf8.RuneCountInString(analysis)+1 {
+		return nil, fmt.Errorf("%d offsets for %d analysis runes", len(items), utf8.RuneCountInString(analysis))
+	}
+	offsets := make([]int, len(items))
+	for i, item := range items {
+		n, ok := item.(float64)
+		if !ok || n != math.Trunc(n) || n < 0 || int(n) > sourceRunes {
+			return nil, fmt.Errorf("offset %d is not a source position", i)
+		}
+		offsets[i] = int(n)
+		if i > 0 && offsets[i] < offsets[i-1] {
+			return nil, fmt.Errorf("offsets decrease at %d", i)
+		}
+	}
+	if offsets[len(offsets)-1] != sourceRunes {
+		return nil, fmt.Errorf("offsets end at %d, not at the source length %d", offsets[len(offsets)-1], sourceRunes)
+	}
+	return offsets, nil
 }
 
 // JSON numbers must not be silently truncated into source positions or IDs.
