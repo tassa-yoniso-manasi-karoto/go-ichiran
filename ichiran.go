@@ -3,6 +3,7 @@ package ichiran
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"unicode"
@@ -129,6 +130,11 @@ func (im *IchiranManager) AnalyzeWithOptions(ctx context.Context, text string, o
 	// Extract JSON from the output
 	output, err := extractJSONFromDockerOutput(queryCtx, resp.Reader)
 	if err != nil {
+		if errors.Is(err, errNoJSONFound) {
+			if inspect, inspectErr := client.ContainerExecInspect(queryCtx, exec.ID); inspectErr == nil {
+				return nil, fmt.Errorf("failed to read exec output (exit code %d): %w", inspect.ExitCode, err)
+			}
+		}
 		return nil, fmt.Errorf("failed to read exec output: %w", err)
 	}
 

@@ -3,6 +3,7 @@ package ichiran
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"strings"
@@ -104,6 +105,11 @@ func (im *IchiranManager) runLispJSON(queryCtx context.Context, lispExpr string)
 
 	output, err := extractJSONFromDockerOutput(queryCtx, resp.Reader)
 	if err != nil {
+		if errors.Is(err, errNoJSONFound) {
+			if inspect, inspectErr := client.ContainerExecInspect(queryCtx, exec.ID); inspectErr == nil {
+				return nil, fmt.Errorf("failed to read exec output (exit code %d): %w", inspect.ExitCode, err)
+			}
+		}
 		return nil, fmt.Errorf("failed to read exec output: %w", err)
 	}
 

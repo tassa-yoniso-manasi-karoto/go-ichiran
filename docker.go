@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -560,7 +561,22 @@ func extractJSONFromDockerOutput(ctx context.Context, reader io.Reader) ([]byte,
 	default:
 	}
 
-	return nil, errNoJSONFound
+	// What the process printed instead, such as ichiran-cli's "ERROR: ..."
+	// or SBCL's fatal heap or stack exhaustion, is the only trace of why.
+	return nil, fmt.Errorf("%w; it ends with: %s", errNoJSONFound, outputTail(rawOutput))
+}
+
+// outputTail returns the last part of a process's output, quoted on one
+// line for the log.
+func outputTail(output []byte) string {
+	const maxTail = 1000
+	if len(output) == 0 {
+		return "nothing, the process printed no output"
+	}
+	if len(output) > maxTail {
+		output = output[len(output)-maxTail:]
+	}
+	return strconv.Quote(strings.ToValidUTF8(string(output), ""))
 }
 
 func placeholder3456543() {
