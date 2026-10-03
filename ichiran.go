@@ -310,6 +310,9 @@ func parseKanjiReadings(matchData []interface{}) []KanjiReading {
 		if kana, ok := matchMap["reading"].(string); ok {
 			reading.Reading = kana
 		}
+		if text, ok := matchMap["text"].(string); ok {
+			reading.Text = text
+		}
 		if readingType, ok := matchMap["type"].(string); ok {
 			reading.Type = readingType
 		}

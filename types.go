@@ -240,6 +240,7 @@ type Prop struct {
 // KanjiReading represents the reading information for a single kanji character
 type KanjiReading struct {
 	Kanji     string `json:"kanji"`     // The kanji character
+	Text      string `json:"text"`      // Kana or other characters between kanji, as written; empty for a kanji
 	Reading   string `json:"reading"`   // The reading in hiragana
 	Type      string `json:"type"`      // Reading type (ja_on, ja_kun)
 	Link      bool   `json:"link"`      // Whether the reading links to adjacent characters

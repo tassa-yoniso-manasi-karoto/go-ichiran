@@ -98,6 +98,17 @@ func (tokens JSONTokens) selectiveTranslit(freqThreshold int, tokenize bool) (*T
 		// Process each kanji reading
 		var tokenResult strings.Builder
 		for _, r := range readings {
+			// Kana and other characters between kanji are written as they are.
+			if r.Kanji == "" {
+				tokenResult.WriteString(r.Text)
+				allProcessedTokens = append(allProcessedTokens, ProcessedToken{
+					Original: r.Text,
+					Result:   r.Text,
+					Status:   StatusNotKanji,
+				})
+				continue
+			}
+
 			// Check if this is a multi-character kanji reading (a compound)
 			if len(r.Kanji) > 1 {
 				// For compound kanji like "一二", process each individual kanji
