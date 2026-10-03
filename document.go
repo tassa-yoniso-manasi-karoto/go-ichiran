@@ -67,6 +67,19 @@ func (im *IchiranManager) AnalyzeDocument(ctx context.Context, input DocumentInp
 	return result, nil
 }
 
+// withPooledConnections wraps a Lisp form so that the database connections
+// Ichiran opens while evaluating it come from a pool. Ichiran opens one per
+// word and per kanji reading and closes it after each query; every close
+// left a socket in TIME_WAIT for a minute, until a container serving
+// several analyses ran out of local ports and refused new connections
+// ("Cannot assign requested address"). Pooled, a process reuses one.
+func withPooledConnections(form string) string {
+	return `(let ((ichiran/dict::*connection* (if (and (consp ichiran/dict::*connection*)` +
+		` (not (member :pooled-p ichiran/dict::*connection*)))` +
+		` (append ichiran/dict::*connection* (list :pooled-p t)) ichiran/dict::*connection*))) ` +
+		form + `)`
+}
+
 // runLispJSON evaluates one Lisp expression with ichiran-cli inside the
 // running container and returns the JSON line it printed.
 func (im *IchiranManager) runLispJSON(queryCtx context.Context, lispExpr string) ([]byte, error) {
@@ -85,7 +98,7 @@ func (im *IchiranManager) runLispJSON(queryCtx context.Context, lispExpr string)
 
 	execConfig := container.ExecOptions{
 		User:         containerInfo.Config.User,
-		Cmd:          []string{"ichiran-cli", "-e", lispExpr},
+		Cmd:          []string{"ichiran-cli", "-e", withPooledConnections(lispExpr)},
 		AttachStdout: true,
 		AttachStderr: true,
 		Tty:          false,

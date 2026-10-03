@@ -101,7 +101,7 @@ func (im *IchiranManager) AnalyzeWithOptions(ctx context.Context, text string, o
 	cmd := []string{
 		"ichiran-cli",
 		"-e",
-		lispExpr,
+		withPooledConnections(lispExpr),
 	}
 
 	// Create execution config

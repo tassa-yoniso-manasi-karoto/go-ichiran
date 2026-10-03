@@ -563,20 +563,23 @@ func extractJSONFromDockerOutput(ctx context.Context, reader io.Reader) ([]byte,
 
 	// What the process printed instead, such as ichiran-cli's "ERROR: ..."
 	// or SBCL's fatal heap or stack exhaustion, is the only trace of why.
-	return nil, fmt.Errorf("%w; it ends with: %s", errNoJSONFound, outputTail(rawOutput))
+	return nil, fmt.Errorf("%w; it printed: %s", errNoJSONFound, outputExcerpt(rawOutput))
 }
 
-// outputTail returns the last part of a process's output, quoted on one
-// line for the log.
-func outputTail(output []byte) string {
-	const maxTail = 1000
+// outputExcerpt returns the start and the end of a process's output,
+// quoted on one line for the log: a fatal Lisp error names its cause
+// first, then prints a backtrace that can run to the end.
+func outputExcerpt(output []byte) string {
+	const maxHead, maxTail = 1500, 1000
 	if len(output) == 0 {
 		return "nothing, the process printed no output"
 	}
-	if len(output) > maxTail {
-		output = output[len(output)-maxTail:]
+	if len(output) <= maxHead+maxTail {
+		return strconv.Quote(strings.ToValidUTF8(string(output), ""))
 	}
-	return strconv.Quote(strings.ToValidUTF8(string(output), ""))
+	head := strings.ToValidUTF8(string(output[:maxHead]), "")
+	tail := strings.ToValidUTF8(string(output[len(output)-maxTail:]), "")
+	return strconv.Quote(head) + " … " + strconv.Quote(tail)
 }
 
 func placeholder3456543() {
