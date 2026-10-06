@@ -3,7 +3,6 @@ package ichiran
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"strings"
 	"unicode"
@@ -12,8 +11,6 @@ import (
 	"github.com/k0kubun/pp"
 	"github.com/robpike/nihongo"
 	"github.com/tidwall/pretty"
-
-	"github.com/docker/docker/api/types/container"
 )
 
 // IMPORTANT: jsonformatter.org is very helpful to help understand ichiran's JSON:
@@ -71,22 +68,6 @@ func (im *IchiranManager) AnalyzeWithOptions(ctx context.Context, text string, o
 		limit = 1
 	}
 
-	// Get Docker client
-	client, err := im.docker.GetClient()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get Docker client: %w", err)
-	}
-
-	// Check container status
-	containerInfo, err := client.ContainerInspect(queryCtx, im.containerName)
-	if err != nil {
-		return nil, fmt.Errorf("failed to inspect container: %w", err)
-	}
-
-	if !containerInfo.State.Running {
-		return nil, fmt.Errorf("container %s is not running", im.containerName)
-	}
-
 	// Build the Lisp expression with proper CL string escaping.
 	// Escape only backslash and double-quote for CL string literals;
 	// semicolons, newlines, tabs and other characters survive literally.
@@ -95,58 +76,9 @@ func (im *IchiranManager) AnalyzeWithOptions(ctx context.Context, text string, o
 	lispExpr := fmt.Sprintf(`(progn (ql:quickload :jsown :silent t) (defmethod jsown:to-json ((word-info ichiran/dict::word-info)) (let* ((gloss-json (handler-case (ichiran::word-info-gloss-json word-info) (error (e) (declare (ignore e)) nil))) (match-json (handler-case (ichiran/kanji:match-readings-json (slot-value word-info (quote ichiran/dict::text)) (slot-value word-info (quote ichiran/dict::kana))) (error (e) (declare (ignore e)) nil))) (word-json (ichiran::word-info-json word-info))) (when gloss-json (jsown:extend-js word-json ("gloss" gloss-json))) (when match-json (jsown:extend-js word-json ("match" match-json))) (jsown:to-json word-json))) (jsown:to-json (ichiran::romanize* "%s" :limit %d)))`,
 		escapedText, limit)
 
-	// Pass ichiran-cli and its arguments directly, without bash -c.
-	// This avoids shell interpretation of the Lisp code and the subtitle
-	// text embedded in it.
-	cmd := []string{
-		"ichiran-cli",
-		"-e",
-		withPooledConnections(lispExpr),
-	}
-
-	// Create execution config
-	execConfig := container.ExecOptions{
-		User:         containerInfo.Config.User,
-		Cmd:          cmd,
-		AttachStdout: true,
-		AttachStderr: true,
-		Tty:          false,
-		Privileged:   false,
-	}
-
-	// Create execution
-	exec, err := client.ContainerExecCreate(queryCtx, im.containerName, execConfig)
+	output, err := im.runLispJSON(queryCtx, lispExpr)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create exec: %w", err)
-	}
-
-	// Attach to execution
-	resp, err := client.ContainerExecAttach(queryCtx, exec.ID, container.ExecStartOptions{})
-	if err != nil {
-		return nil, fmt.Errorf("failed to attach to exec: %w", err)
-	}
-	defer resp.Close()
-
-	// Extract JSON from the output
-	output, err := extractJSONFromDockerOutput(queryCtx, resp.Reader)
-	if err != nil {
-		if errors.Is(err, errNoJSONFound) {
-			if inspect, inspectErr := client.ContainerExecInspect(queryCtx, exec.ID); inspectErr == nil {
-				return nil, fmt.Errorf("failed to read exec output (exit code %d): %w", inspect.ExitCode, err)
-			}
-		}
-		return nil, fmt.Errorf("failed to read exec output: %w", err)
-	}
-
-	// Check execution status
-	inspect, err := client.ContainerExecInspect(queryCtx, exec.ID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to inspect exec: %w", err)
-	}
-
-	if inspect.ExitCode != 0 {
-		return nil, fmt.Errorf("command failed with exit code %d: %s",
-			inspect.ExitCode, string(output))
+		return nil, err
 	}
 
 	// Parse the JSON output into tokens (with alternatives if limit > 1)

@@ -3,13 +3,10 @@ package ichiran
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"math"
 	"strings"
 	"unicode/utf8"
-
-	"github.com/docker/docker/api/types/container"
 )
 
 // adapterVersion is the current version of the Lisp→Go analysis envelope.
@@ -78,63 +75,6 @@ func withPooledConnections(form string) string {
 		` (not (member :pooled-p ichiran/dict::*connection*)))` +
 		` (append ichiran/dict::*connection* (list :pooled-p t)) ichiran/dict::*connection*))) ` +
 		form + `)`
-}
-
-// runLispJSON evaluates one Lisp expression with ichiran-cli inside the
-// running container and returns the JSON line it printed.
-func (im *IchiranManager) runLispJSON(queryCtx context.Context, lispExpr string) ([]byte, error) {
-	client, err := im.docker.GetClient()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get Docker client: %w", err)
-	}
-
-	containerInfo, err := client.ContainerInspect(queryCtx, im.containerName)
-	if err != nil {
-		return nil, fmt.Errorf("failed to inspect container: %w", err)
-	}
-	if !containerInfo.State.Running {
-		return nil, fmt.Errorf("container %s is not running", im.containerName)
-	}
-
-	execConfig := container.ExecOptions{
-		User:         containerInfo.Config.User,
-		Cmd:          []string{"ichiran-cli", "-e", withPooledConnections(lispExpr)},
-		AttachStdout: true,
-		AttachStderr: true,
-		Tty:          false,
-		Privileged:   false,
-	}
-
-	exec, err := client.ContainerExecCreate(queryCtx, im.containerName, execConfig)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create exec: %w", err)
-	}
-
-	resp, err := client.ContainerExecAttach(queryCtx, exec.ID, container.ExecStartOptions{})
-	if err != nil {
-		return nil, fmt.Errorf("failed to attach to exec: %w", err)
-	}
-	defer resp.Close()
-
-	output, err := extractJSONFromDockerOutput(queryCtx, resp.Reader)
-	if err != nil {
-		if errors.Is(err, errNoJSONFound) {
-			if inspect, inspectErr := client.ContainerExecInspect(queryCtx, exec.ID); inspectErr == nil {
-				return nil, fmt.Errorf("failed to read exec output (exit code %d): %w", inspect.ExitCode, err)
-			}
-		}
-		return nil, fmt.Errorf("failed to read exec output: %w", err)
-	}
-
-	inspect, err := client.ContainerExecInspect(queryCtx, exec.ID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to inspect exec: %w", err)
-	}
-	if inspect.ExitCode != 0 {
-		return nil, fmt.Errorf("command failed with exit code %d: %s",
-			inspect.ExitCode, string(output))
-	}
-	return output, nil
 }
 
 // AnalyzeDocumentContext is the context-aware default-manager version.
