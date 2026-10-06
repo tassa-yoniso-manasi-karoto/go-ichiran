@@ -60,9 +60,6 @@ func (im *IchiranManager) Analyze(ctx context.Context, text string) (*JSONTokens
 // Use AnalyzeOptions.Limit > 1 to get alternative sentence segmentations
 // from ichiran, useful for disambiguation of ambiguous readings.
 func (im *IchiranManager) AnalyzeWithOptions(ctx context.Context, text string, opts AnalyzeOptions) (*AnalysisResult, error) {
-	queryCtx, cancel := context.WithTimeout(ctx, im.QueryTimeout)
-	defer cancel()
-
 	limit := opts.Limit
 	if limit < 1 {
 		limit = 1
@@ -76,7 +73,7 @@ func (im *IchiranManager) AnalyzeWithOptions(ctx context.Context, text string, o
 	lispExpr := fmt.Sprintf(`(progn (ql:quickload :jsown :silent t) (defmethod jsown:to-json ((word-info ichiran/dict::word-info)) (let* ((gloss-json (handler-case (ichiran::word-info-gloss-json word-info) (error (e) (declare (ignore e)) nil))) (match-json (handler-case (ichiran/kanji:match-readings-json (slot-value word-info (quote ichiran/dict::text)) (slot-value word-info (quote ichiran/dict::kana))) (error (e) (declare (ignore e)) nil))) (word-json (ichiran::word-info-json word-info))) (when gloss-json (jsown:extend-js word-json ("gloss" gloss-json))) (when match-json (jsown:extend-js word-json ("match" match-json))) (jsown:to-json word-json))) (jsown:to-json (ichiran::romanize* "%s" :limit %d)))`,
 		escapedText, limit)
 
-	output, err := im.runLispJSON(queryCtx, lispExpr)
+	output, err := im.runLispJSON(ctx, lispExpr)
 	if err != nil {
 		return nil, err
 	}

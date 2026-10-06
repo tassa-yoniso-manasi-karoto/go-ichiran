@@ -28,9 +28,6 @@ func (im *IchiranManager) AnalyzeDocument(ctx context.Context, input DocumentInp
 		}
 		ids[fragment.ID] = true
 	}
-	queryCtx, cancel := context.WithTimeout(ctx, im.QueryTimeout)
-	defer cancel()
-
 	limit := opts.Limit
 	if limit < 1 {
 		limit = 5
@@ -40,7 +37,7 @@ func (im *IchiranManager) AnalyzeDocument(ctx context.Context, input DocumentInp
 		return &DocumentResult{AdapterVersion: adapterVersion}, nil
 	}
 
-	output, err := im.runLispJSON(queryCtx, buildDocumentLispExpr(input, limit))
+	output, err := im.runLispJSON(ctx, buildDocumentLispExpr(input, limit))
 	if err != nil {
 		return nil, err
 	}

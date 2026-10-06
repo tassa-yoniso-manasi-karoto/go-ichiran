@@ -12,7 +12,7 @@ require (
 	github.com/robpike/nihongo v0.0.0-20230705220025-ab7f6184a918
 	github.com/rs/zerolog v1.34.0
 	github.com/stretchr/testify v1.11.1
-	github.com/tassa-yoniso-manasi-karoto/dockerutil v0.0.0-20260816082843-7b61cea3e0a2
+	github.com/tassa-yoniso-manasi-karoto/dockerutil v0.0.0-20261006145505-dd3122cf9875
 	github.com/tassa-yoniso-manasi-karoto/translitkit v0.0.0-20251219122617-744329832b99
 	github.com/tidwall/pretty v1.2.1
 )

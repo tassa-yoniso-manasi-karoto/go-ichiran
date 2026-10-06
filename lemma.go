@@ -37,10 +37,7 @@ func (im *IchiranManager) ResolveLemmas(ctx context.Context, queries []LemmaQuer
 			return nil, fmt.Errorf("lemma query %d needs a lemma and its reading", i)
 		}
 	}
-	queryCtx, cancel := context.WithTimeout(ctx, im.QueryTimeout)
-	defer cancel()
-
-	output, err := im.runLispJSON(queryCtx, buildLemmaLispExpr(queries))
+	output, err := im.runLispJSON(ctx, buildLemmaLispExpr(queries))
 	if err != nil {
 		return nil, err
 	}

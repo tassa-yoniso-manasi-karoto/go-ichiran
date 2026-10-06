@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/docker/docker/api/types/container"
+	dockerclient "github.com/docker/docker/client"
+	"github.com/docker/docker/errdefs"
 )
 
 // queryTagVariable names the environment variable that tags the processes
@@ -29,6 +31,24 @@ const killQueryScript = `for p in /proc/[0-9]*; do ` +
 	`done; true`
 
 // runLispJSON evaluates one Lisp expression with ichiran-cli inside the
+// running container and returns the JSON line it printed, within the
+// manager's QueryTimeout.
+//
+// While any process restarts the shared Ichiran containers, the call waits
+// for the restart, and its QueryTimeout runs only from when it starts.
+func (im *IchiranManager) runLispJSON(ctx context.Context, lispExpr string) ([]byte, error) {
+	var output []byte
+	err := im.docker.SharedCall(ctx, func() error {
+		queryCtx, cancel := context.WithTimeout(ctx, im.QueryTimeout)
+		defer cancel()
+		var err error
+		output, err = im.runQuery(queryCtx, lispExpr)
+		return err
+	})
+	return output, err
+}
+
+// runQuery evaluates one Lisp expression with ichiran-cli inside the
 // running container and returns the JSON line it printed.
 //
 // The process lives no longer than queryCtx. Waiting for its output ends
@@ -37,18 +57,19 @@ const killQueryScript = `for p in /proc/[0-9]*; do ` +
 // left computing in the container holds a CPU until the container stops.
 // It also runs under timeout(1), set to queryCtx's deadline, which ends it
 // should this program die first.
-func (im *IchiranManager) runLispJSON(queryCtx context.Context, lispExpr string) ([]byte, error) {
+func (im *IchiranManager) runQuery(queryCtx context.Context, lispExpr string) ([]byte, error) {
 	client, err := im.docker.GetClient()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get Docker client: %w", err)
 	}
 
-	containerInfo, err := client.ContainerInspect(queryCtx, im.containerName)
+	containerInfo, err := im.inspectContainer(queryCtx, client)
 	if err != nil {
 		return nil, fmt.Errorf("failed to inspect container: %w", err)
 	}
+	containerID := containerInfo.ID
 	if !containerInfo.State.Running {
-		return nil, fmt.Errorf("container %s is not running", im.containerName)
+		return nil, fmt.Errorf("container %s is not running", containerID)
 	}
 
 	tag, err := newQueryTag()
@@ -70,7 +91,7 @@ func (im *IchiranManager) runLispJSON(queryCtx context.Context, lispExpr string)
 		Privileged:   false,
 	}
 
-	exec, err := client.ContainerExecCreate(queryCtx, im.containerName, execConfig)
+	exec, err := client.ContainerExecCreate(queryCtx, containerID, execConfig)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create exec: %w", err)
 	}
@@ -78,7 +99,7 @@ func (im *IchiranManager) runLispJSON(queryCtx context.Context, lispExpr string)
 	resp, err := client.ContainerExecAttach(queryCtx, exec.ID, container.ExecStartOptions{})
 	if err != nil {
 		// The process may have started all the same.
-		im.killQuery(tag)
+		im.killQuery(containerID, tag)
 		return nil, fmt.Errorf("failed to attach to exec: %w", err)
 	}
 	defer resp.Close()
@@ -101,7 +122,7 @@ func (im *IchiranManager) runLispJSON(queryCtx context.Context, lispExpr string)
 		<-read
 	}
 	if queryCtx.Err() != nil {
-		im.killQuery(tag)
+		im.killQuery(containerID, tag)
 		return nil, stoppedQueryError(queryCtx.Err())
 	}
 
@@ -126,6 +147,19 @@ func (im *IchiranManager) runLispJSON(queryCtx context.Context, lispExpr string)
 	return output, nil
 }
 
+// inspectContainer inspects the Ichiran container. When another process
+// recreated the containers, which gave them new IDs, it looks the
+// container up again first.
+func (im *IchiranManager) inspectContainer(ctx context.Context, cli *dockerclient.Client) (container.InspectResponse, error) {
+	info, err := cli.ContainerInspect(ctx, im.container())
+	if errdefs.IsNotFound(err) {
+		if err = im.resolveContainer(ctx); err == nil {
+			info, err = cli.ContainerInspect(ctx, im.container())
+		}
+	}
+	return info, err
+}
+
 // stoppedQueryError reports a query whose context ended before Ichiran
 // answered. It wraps the context's error, so callers can tell a
 // cancellation from a deadline.
@@ -139,13 +173,13 @@ func stoppedQueryError(err error) error {
 // killQuery kills the processes of a query in the container. The query's
 // context is over by then, so the kill has its own short deadline; should
 // it fail, timeout(1) still ends the process at the query's deadline.
-func (im *IchiranManager) killQuery(tag string) {
+func (im *IchiranManager) killQuery(containerID, tag string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	client, err := im.docker.GetClient()
 	if err == nil {
 		var exec container.ExecCreateResponse
-		exec, err = client.ContainerExecCreate(ctx, im.containerName, container.ExecOptions{
+		exec, err = client.ContainerExecCreate(ctx, containerID, container.ExecOptions{
 			Cmd: []string{"sh", "-c", killQueryScript, tag},
 		})
 		if err == nil {

@@ -41,9 +41,6 @@ func (im *IchiranManager) AlignReadings(ctx context.Context, queries []ReadingQu
 }
 
 func (im *IchiranManager) alignReadingBatch(ctx context.Context, queries []ReadingQuery) ([][]KanjiReading, error) {
-	queryCtx, cancel := context.WithTimeout(ctx, im.QueryTimeout)
-	defer cancel()
-
 	var b strings.Builder
 	b.WriteString(`(progn`)
 	b.WriteString(` (ql:quickload :jsown :silent t)`)
@@ -62,7 +59,7 @@ func (im *IchiranManager) alignReadingBatch(ctx context.Context, queries []Readi
 	b.WriteString(` (error (e) (jsown:to-json (jsown:new-js ("adapterError" (princ-to-string e))))))`)
 	b.WriteString(`)`)
 
-	output, err := im.runLispJSON(queryCtx, b.String())
+	output, err := im.runLispJSON(ctx, b.String())
 	if err != nil {
 		return nil, err
 	}

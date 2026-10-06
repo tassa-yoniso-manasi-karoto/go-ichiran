@@ -14,8 +14,6 @@ func (im *IchiranManager) RomanizeKana(ctx context.Context, readings []string) (
 	if len(readings) == 0 {
 		return nil, nil
 	}
-	queryCtx, cancel := context.WithTimeout(ctx, im.QueryTimeout)
-	defer cancel()
 
 	var b strings.Builder
 	b.WriteString(`(progn`)
@@ -30,7 +28,7 @@ func (im *IchiranManager) RomanizeKana(ctx context.Context, readings []string) (
 	b.WriteString(` (error (e) (jsown:to-json (jsown:new-js ("adapterError" (princ-to-string e))))))`)
 	b.WriteString(`)`)
 
-	output, err := im.runLispJSON(queryCtx, b.String())
+	output, err := im.runLispJSON(ctx, b.String())
 	if err != nil {
 		return nil, err
 	}
@@ -61,7 +59,7 @@ func (im *IchiranManager) EngineImage(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("failed to get Docker client: %w", err)
 	}
-	info, err := client.ContainerInspect(ctx, im.containerName)
+	info, err := im.inspectContainer(ctx, client)
 	if err != nil {
 		return "", fmt.Errorf("failed to inspect container: %w", err)
 	}

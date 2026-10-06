@@ -59,6 +59,7 @@ type IchiranManager struct {
 	docker                   *dockerutil.DockerManager
 	logger                   *dockerutil.ContainerLogConsumer
 	projectName              string
+	containerMu              sync.Mutex // guards containerName once the manager runs
 	containerName            string
 	containerNameExplicit    bool
 	QueryTimeout             time.Duration
@@ -293,8 +294,33 @@ func (im *IchiranManager) resolveContainer(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("resolve Ichiran container: %w", err)
 	}
+	im.containerMu.Lock()
 	im.containerName = containerID
+	im.containerMu.Unlock()
 	return nil
+}
+
+// container returns the name or ID of the Ichiran container.
+func (im *IchiranManager) container() string {
+	im.containerMu.Lock()
+	defer im.containerMu.Unlock()
+	return im.containerName
+}
+
+// Restart restarts the Ichiran containers, or with recreate replaces them,
+// once the calls of every process using them have ended; calls made
+// meanwhile wait for it. A restart keeps the containers' Ichiran build,
+// while a recreation builds it anew; the database is kept either way. When
+// another process restarted them while this one waited, they are not
+// restarted again.
+func (im *IchiranManager) Restart(ctx context.Context, recreate bool) error {
+	if err := im.docker.Restart(ctx, recreate); err != nil {
+		return err
+	}
+	if !recreate {
+		return nil
+	}
+	return im.resolveContainer(context.WithoutCancel(ctx))
 }
 
 // MustInit initializes the docker service and panics on error
@@ -327,7 +353,7 @@ func (im *IchiranManager) Status(ctx context.Context) (string, error) {
 
 // GetContainerName returns the name of the main container
 func (im *IchiranManager) GetContainerName() string {
-	return im.containerName
+	return im.container()
 }
 
 // For backward compatibility with existing code
