@@ -25,8 +25,8 @@ go get github.com/tassa-yoniso-manasi-karoto/go-ichiran
 
 ```go
 func main() {
-	// Initialize the environment (downloads, builds and starts containers)
-	ichiran.MustInit()
+	// Initialize the environment (downloads and starts the containers)
+	check(ichiran.Init())
 	defer ichiran.Close()
 
 	tokens, err := ichiran.Analyze("私は日本語を勉強しています")
@@ -78,46 +78,43 @@ GlossParts: []string{"私(I; me)",
 	"います (to be (of animate objects); to exist; to stay; to be ...-ing; to have been ...-ing)"}
 ```
 
+
+
+> [!NOTE]
+> Every program using go-ichiran on a machine shares one `pg` and one `main` container. go-ichiran counts the processes using them, under `go-ichiran/docker` in the user's cache directory, and the last one to close removes them. `Stop` and `InitRecreate` (which `MustInit` calls) refuse while anyone else uses them, and `Restart` waits for everyone's running queries. A process that dies without closing is counted out: if nobody else uses the containers, the next process to start removes them and starts them fresh.
+>
+> Containers started by an older version carry other ownership labels: go-ichiran uses them, but never removes or recreates them. Remove them once with `docker compose -p ichiran down` while nothing uses them.
+ 
+
 > [!TIP]
 > if you have 'exec: "ichiran-cli": executable file not found' errors, remove directory ./docker/pgdata (as recommended by README of ichiran repo) at location below and use `InitRecreate(ctx, true)` to bypass cache and force rebuild from scratch.
 
 
 ### Context-Aware API
 
-Same API but with context support for better timeout and cancellation control.
+The functions that use the containers take a context, or have a variant that does (`InitWithContext`, `AnalyzeWithContext`, `AnalyzeDocumentContext`, …). The default instance keeps the context of the first call that creates it, so make that call with a long-lived context, not one with a deadline. To give a single call a deadline, give it a context of its own:
 
 ```go
-// Create a context with timeout
-ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+callCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 defer cancel()
 
-// Initialize with context
-ichiran.InitWithContext(ctx)
-
-// Analyze with context
-tokens, err := ichiran.AnalyzeWithContext(ctx, "こんにちは")
+tokens, err := ichiran.AnalyzeWithContext(callCtx, "こんにちは")
 ```
 
-### Manager-Based API (Multiple Instances)
+### Manager-Based API
 
-> [!CAUTION]
-> this is an untested, experimental feature.
-
+`NewManager` gives you a manager of your own instead of the default instance. Its project name decides which containers it uses: managers with the same name (by default `ichiran`) share one `pg` and one `main`, while another name (`WithProjectName`) starts a separate pair with its own database (~5GB), restored from scratch on its first start (10–20 minutes).
 
 ```go
-// Create managers with different configurations
-manager1, err := ichiran.NewManager(ctx, ichiran.WithProjectName("instance1"))
-manager2, err := ichiran.NewManager(ctx, ichiran.WithProjectName("instance2"))
+ctx := context.Background()
+manager, err := ichiran.NewManager(ctx)
+check(err)
+defer manager.Close()
+check(manager.Init(ctx))
 
-// Use them independently
-tokens1, err := manager1.Analyze(ctx, "こんにちは")
-tokens2, err := manager2.Analyze(ctx, "さようなら")
-
-// Clean up
-manager1.Close()
-manager2.Close()
+tokens, err := manager.Analyze(ctx, "こんにちは")
 ```
- 
+
 ## Docker compose containers' location
 
 - Linux: ~/.config/ichiran

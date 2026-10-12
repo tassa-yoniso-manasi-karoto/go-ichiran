@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -57,6 +58,7 @@ var (
 // IchiranManager handles Docker lifecycle for the Ichiran project
 type IchiranManager struct {
 	docker                   *dockerutil.DockerManager
+	runtime                  *dockerutil.Runtime // go-ichiran's own, through which the manager holds its lease; closed with it
 	logger                   *dockerutil.ContainerLogConsumer
 	projectName              string
 	containerMu              sync.Mutex // guards containerName once the manager runs
@@ -181,21 +183,38 @@ func NewManager(ctx context.Context, opts ...ManagerOption) (*IchiranManager, er
 		if projectLease != nil && !managerReady {
 			_ = projectLease.Release(ctx)
 		}
+		if manager.runtime != nil && !managerReady {
+			_ = manager.runtime.Close(ctx)
+		}
 	}()
-	if runtime := dockerutil.RuntimeFromContext(ctx); runtime != nil {
-		lease, err := runtime.AcquireProject(ctx, dockerutil.ProjectSpec{
-			BaseName:  manager.projectName,
-			Kind:      "ichiran",
-			Lifecycle: dockerutil.LifecycleShared,
-		})
-		if err != nil {
-			return nil, fmt.Errorf("acquire Ichiran project: %w", err)
-		}
-		projectLease = lease
-		manager.projectName = lease.Name()
-		if !manager.containerNameExplicit {
-			manager.containerName = ""
-		}
+	// Every program on the machine shares the containers, so their processes
+	// must count each other in one place: the lease is always taken through
+	// a runtime of go-ichiran's own, never the one in ctx, which counts only
+	// its application's processes. The last process to close removes the
+	// containers, and a restart waits for the queries of all of them.
+	runtime, err := dockerutil.NewRuntime(ctx, dockerutil.RuntimeConfig{
+		Application: "go-ichiran",
+		RootDir:     filepath.Join(xdg.CacheHome, "go-ichiran", "docker"),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("create Ichiran Docker runtime: %w", err)
+	}
+	if err := runtime.RecoveryError(); err != nil {
+		Logger.Warn().Err(err).Msg("Removing the containers of crashed processes was deferred")
+	}
+	manager.runtime = runtime
+	lease, err := runtime.AcquireProject(ctx, dockerutil.ProjectSpec{
+		BaseName:  manager.projectName,
+		Kind:      "ichiran",
+		Lifecycle: dockerutil.LifecycleShared,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("acquire Ichiran project: %w", err)
+	}
+	projectLease = lease
+	manager.projectName = lease.Name()
+	if !manager.containerNameExplicit {
+		manager.containerName = ""
 	}
 
 	// Get XDG data directory for ichiran
@@ -340,10 +359,12 @@ func (im *IchiranManager) Close() error {
 	return im.CloseWithContext(context.Background())
 }
 
-// CloseWithContext releases the manager's shared Docker lease with a context.
+// CloseWithContext releases the manager's shared Docker lease with a
+// context; the last process to release it removes the containers.
 func (im *IchiranManager) CloseWithContext(ctx context.Context) error {
 	im.logger.Close()
-	return im.docker.CloseWithContext(ctx)
+	err := im.docker.CloseWithContext(ctx)
+	return errors.Join(err, im.runtime.Close(ctx))
 }
 
 // Status returns the current status of the project
@@ -453,8 +474,7 @@ func CloseWithContext(ctx context.Context) error {
 	defer mu.Unlock()
 	
 	if instance != nil {
-		instance.logger.Close()
-		err := instance.docker.CloseWithContext(ctx)
+		err := instance.CloseWithContext(ctx)
 		// Mark the instance as closed
 		instanceClosed = true
 		return err
