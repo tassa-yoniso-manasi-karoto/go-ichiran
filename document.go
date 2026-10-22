@@ -361,12 +361,15 @@ func writeRootLispDefinitions(b *strings.Builder) {
 	b.WriteString(` (when (and kanji-rec restricted)`)
 	b.WriteString(` (unless (ichiran/dict::match-kana-kanji kana-rec kanji-rec restricted)`)
 	b.WriteString(` (return-from langkit-verify-root nil)))`)
-	// Canonical lemma — always by dictionary ord, never from occurrence
+	// Canonical lemma — always by dictionary ord, never from occurrence: the
+	// first kanji spelling the reading allows, so that a word keeps one
+	// headword however it is written. It is kana only for a reading marked
+	// no-kanji or an entry without kanji; "usually kana" (uk) senses do not
+	// count, as how a word is written is measured from the corpus instead.
 	b.WriteString(` (let ((dict-kana (ichiran/dict::strip-hints (ichiran/dict::text kana-rec))) (lemma nil) (lemma-rec nil))`)
 	b.WriteString(` (cond`)
 	b.WriteString(` ((ichiran/dict::nokanji kana-rec) (setf lemma dict-kana))`)
 	b.WriteString(` ((= (ichiran/dict::n-kanji root-entry) 0) (setf lemma dict-kana))`)
-	b.WriteString(` ((postmodern:select-dao 'ichiran/dict::sense-prop (:and (:= 'ichiran/dict::seq root-seq) (:= 'ichiran/dict::tag "misc") (:= 'ichiran/dict::text "uk"))) (setf lemma dict-kana))`)
 	b.WriteString(` (t`)
 	b.WriteString(` (let ((kanji-recs (langkit-sort-readings (postmodern:select-dao 'ichiran/dict::kanji-text (:= 'ichiran/dict::seq root-seq)))))`)
 	b.WriteString(` (dolist (kt kanji-recs)`)

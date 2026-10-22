@@ -352,8 +352,10 @@ type InterpretationResult struct {
 
 // RootCandidate is a dictionary root resolved from a conjugated/inflected
 // occurrence. Each candidate has a verified dictionary Seq, canonical lemma,
-// dictionary kana, and POS/gloss data. Multiple candidates represent
-// alternative dictionary entries, not words in a compound.
+// dictionary kana, and POS/gloss data. The lemma is the entry's first kanji
+// spelling that the kana allows, in dictionary order, or the kana when the
+// reading takes no kanji. Multiple candidates represent alternative
+// dictionary entries, not words in a compound.
 type RootCandidate struct {
 	DictionarySeq int     `json:"dictionarySeq"`
 	Lemma         string  `json:"lemma"`
