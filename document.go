@@ -758,6 +758,9 @@ func parseRootCandidate(m map[string]interface{}) (RootCandidate, error) {
 		return rc, fmt.Errorf("missing or empty lemma")
 	}
 	rc.Lemma = lemma
+	if hinted, ok := m["hintedRomaji"].(string); ok {
+		rc.HintedRomaji = hinted
+	}
 	if gloss := m["gloss"]; gloss != nil {
 		glossArray, ok := gloss.([]interface{})
 		if !ok {

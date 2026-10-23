@@ -19,7 +19,9 @@ type LemmaQuery struct {
 // LemmaResult lists the dictionary roots a query names, in ascending Seq
 // order, each verified exactly as AnalyzeDocument verifies an analyzed
 // word's roots. Romaji romanizes the query's occurrence reading with
-// Ichiran's own word romanizer; it is empty when that reading is empty.
+// Ichiran's own word romanizer, without the kana hints of any entry, which
+// a candidate's HintedRomaji applies to its dictionary form; it is empty
+// when that reading is empty.
 type LemmaResult struct {
 	Candidates []RootCandidate
 	Romaji     string
@@ -104,13 +106,15 @@ func ResolveRootsContext(ctx context.Context, keys []RootKey) ([]*RootCandidate,
 }
 
 // buildRootLispExpr constructs the Lisp expression for ResolveRoots: each
-// key goes through langkit-verify-root, with no spelling to verify.
+// key goes through langkit-verify-root, with no spelling to verify, and a
+// root found gets its hinted romaji.
 func buildRootLispExpr(keys []RootKey) string {
 	var b strings.Builder
 
 	b.WriteString(`(progn`)
 	b.WriteString(` (ql:quickload :jsown :silent t)`)
 	writeRootLispDefinitions(&b)
+	writeHintedRomajiLispDefinition(&b)
 
 	b.WriteString(` (setf *langkit-root-memo* (make-hash-table :test 'equal))`)
 	b.WriteString(` (setf *langkit-warnings* nil)`)
@@ -123,7 +127,7 @@ func buildRootLispExpr(keys []RootKey) string {
 	}
 	b.WriteString(`))`)
 	b.WriteString(` (let ((root (langkit-verify-root (first key) (second key) nil)))`)
-	b.WriteString(` (push (jsown:new-js ("candidates" (when root (list root)))) results)))`)
+	b.WriteString(` (push (jsown:new-js ("candidates" (when root (list (langkit-hinted-romaji root))))) results)))`)
 	b.WriteString(` (let ((result (jsown:new-js ("adapterVersion" 1) ("results" (nreverse results)))))`)
 	b.WriteString(` (when *langkit-warnings* (jsown:extend-js result ("warnings" (nreverse *langkit-warnings*))))`)
 	b.WriteString(` (jsown:to-json result)))`)
@@ -200,13 +204,15 @@ func parseRootResults(data []byte, count int) ([]*RootCandidate, error) {
 // in either kana script, and, unless the lemma is that same reading in kana,
 // one of its kanji records spells the lemma. langkit-verify-root, shared with
 // document analysis, then requires a root entry, checks reading
-// restrictions and chooses the canonical spelling and gloss.
+// restrictions and chooses the canonical spelling and gloss, and each
+// candidate gets its hinted romaji.
 func buildLemmaLispExpr(queries []LemmaQuery) string {
 	var b strings.Builder
 
 	b.WriteString(`(progn`)
 	b.WriteString(` (ql:quickload :jsown :silent t)`)
 	writeRootLispDefinitions(&b)
+	writeHintedRomajiLispDefinition(&b)
 
 	b.WriteString(` (defun langkit-resolve-lemma (lemma reading)`)
 	b.WriteString(` (ichiran/dict::with-connection ichiran/dict::*connection*`)
@@ -216,7 +222,7 @@ func buildLemmaLispExpr(queries []LemmaQuery) string {
 	b.WriteString(` (unless (equal (langkit-kana-key lemma) (langkit-kana-key reading))`)
 	b.WriteString(` (setf seqs (intersection seqs (postmodern:query (:select 'seq :from 'kanji-text :where (:= 'text lemma)) :column))))`)
 	b.WriteString(` (dolist (seq (sort (copy-list seqs) #'<))`)
-	b.WriteString(` (let ((c (langkit-verify-root seq reading lemma))) (when c (push c candidates))))`)
+	b.WriteString(` (let ((c (langkit-verify-root seq reading lemma))) (when c (push (langkit-hinted-romaji c) candidates))))`)
 	b.WriteString(` (nreverse candidates))))`)
 
 	b.WriteString(` (setf *langkit-root-memo* (make-hash-table :test 'equal))`)
@@ -243,6 +249,23 @@ func buildLemmaLispExpr(queries []LemmaQuery) string {
 	b.WriteString(`)`)
 
 	return b.String()
+}
+
+// writeHintedRomajiLispDefinition defines langkit-hinted-romaji, which
+// gives a verified root the romanization of its kana with the hints
+// Ichiran gives its entry (RootCandidate.HintedRomaji), and returns it. A
+// root whose entry has no hints is returned as it is.
+func writeHintedRomajiLispDefinition(b *strings.Builder) {
+	b.WriteString(` (defun langkit-hinted-romaji (root)`)
+	b.WriteString(` (ichiran/dict::with-connection ichiran/dict::*connection*`)
+	b.WriteString(` (let ((rec (car (postmodern:select-dao 'ichiran/dict::kana-text (:and (:= 'ichiran/dict::seq (jsown:val root "dictionarySeq")) (:= 'ichiran/dict::text (jsown:val root "kana")))))))`)
+	b.WriteString(` (when rec`)
+	// get-kana inserts the entry's hints, such as the mark before the
+	// particle は that romanize-word reads as わ.
+	b.WriteString(` (let ((hinted (ichiran/dict::get-kana rec)))`)
+	b.WriteString(` (unless (equal hinted (ichiran/dict::text rec))`)
+	b.WriteString(` (jsown:extend-js root ("hintedRomaji" (ichiran:romanize-word hinted :normalize nil))))))))`)
+	b.WriteString(` root)`)
 }
 
 // parseLemmaResults parses the envelope printed by buildLemmaLispExpr.

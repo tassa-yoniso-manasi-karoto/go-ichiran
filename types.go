@@ -356,9 +356,15 @@ type InterpretationResult struct {
 // spelling that the kana allows, in dictionary order, or the kana when the
 // reading takes no kanji. Multiple candidates represent alternative
 // dictionary entries, not words in a compound.
+//
+// HintedRomaji romanizes Kana as Ichiran's analysis romanizes this entry,
+// with the kana hints it gives it: the particle は read as wa, さては as
+// sate wa. It is empty for an entry without hints, whose Kana romanizes
+// like any kana, and only ResolveLemmas and ResolveRoots give it.
 type RootCandidate struct {
 	DictionarySeq int     `json:"dictionarySeq"`
 	Lemma         string  `json:"lemma"`
 	Kana          string  `json:"kana"`
 	Gloss         []Gloss `json:"gloss,omitempty"`
+	HintedRomaji  string  `json:"hintedRomaji,omitempty"`
 }
